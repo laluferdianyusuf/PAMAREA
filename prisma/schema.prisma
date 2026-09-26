@@ -197,6 +197,8 @@ model User {
   // User yang dibuat oleh user ini
   createdUsers User[] @relation("UserCreator")
 
+  sessions Session[]
+
   devices UserDevice[]
 
   assignments        PatrolAssignment[] @relation("AssignedSecurity")
@@ -230,6 +232,30 @@ model User {
   @@index([deletedAt])
   @@index([fullName])
   @@map("users")
+}
+
+// ============================================================
+// USER SESSION
+// ============================================================
+
+model Session {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  refreshTokenHash String @map("refresh_token_hash")
+
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@map("sessions")
 }
 
 // ============================================================
@@ -368,6 +394,7 @@ model PatrolPointNfc {
   @@index([patrolPointId, status])
   @@index([nfcTagId, status])
   @@index([assignedAt])
+  @@index([unassignedAt])
   @@map("patrol_point_nfc")
 }
 
@@ -439,6 +466,8 @@ model Question {
 
   @@index([questionType])
   @@index([status])
+   @@index([createdBy])
+
   @@map("questions")
 }
 
@@ -460,7 +489,9 @@ model QuestionOption {
 
   createdAt DateTime @default(now()) @map("created_at")
 
+@@unique([questionId, value])
   @@index([questionId, sortOrder])
+
   @@map("question_options")
 }
 
@@ -490,6 +521,8 @@ model PointQuestion {
   @@unique([patrolPointId, questionId])
   @@index([patrolPointId, sortOrder])
   @@index([questionId])
+  @@index([createdBy])
+  
   @@map("point_questions")
 }
 
