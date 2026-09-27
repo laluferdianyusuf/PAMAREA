@@ -6,13 +6,18 @@ import {
   Param,
   Patch,
   Post,
+  UseGuards,
 } from '@nestjs/common';
 
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { CreateSitesDto } from './dto/create-sites.dto.js';
 import { UpdateSitesDto } from './dto/update-sites.dto.js';
 import { SitesService } from './sites.service.js';
 
 @Controller('sites')
+@UseGuards(JwtAuthGuard)
 export class SitesController {
   constructor(private readonly sitesService: SitesService) {}
 
@@ -32,8 +37,8 @@ export class SitesController {
   }
 
   @Post()
-  create(@Body() dto: CreateSitesDto) {
-    return this.sitesService.createSite(dto);
+  create(@Body() dto: CreateSitesDto, @CurrentUser() user: User) {
+    return this.sitesService.createSite(dto, user.id);
   }
 
   @Patch(':id')

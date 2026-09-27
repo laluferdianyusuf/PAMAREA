@@ -26,10 +26,6 @@ export class NfcValidationService {
       });
     }
 
-    /**
-     * Pastikan patrol memang milik satpam
-     * yang sedang melakukan request.
-     */
     if (patrol.userId !== userId) {
       throw new UnprocessableEntityException({
         code: 'PATROL_ACCESS_DENIED',
@@ -37,10 +33,6 @@ export class NfcValidationService {
       });
     }
 
-    /**
-     * Patrol yang sudah submit tidak boleh
-     * divalidasi ulang.
-     */
     if (patrol.status === 'SUBMITTED') {
       throw new UnprocessableEntityException({
         code: 'PATROL_ALREADY_SUBMITTED',
@@ -50,9 +42,6 @@ export class NfcValidationService {
 
     const normalizedUid = uid.trim().toUpperCase();
 
-    /**
-     * Cari NFC berdasarkan UID.
-     */
     const nfcTag = await this.prisma.nfcTag.findUnique({
       where: {
         uid: normalizedUid,
@@ -66,9 +55,6 @@ export class NfcValidationService {
       });
     }
 
-    /**
-     * NFC harus ACTIVE.
-     */
     if (nfcTag.status !== 'ACTIVE') {
       throw new UnprocessableEntityException({
         code: 'NFC_INACTIVE',
@@ -76,12 +62,6 @@ export class NfcValidationService {
       });
     }
 
-    /**
-     * Cari hubungan NFC dengan patrol point.
-     *
-     * Ini yang memastikan NFC tersebut benar-benar
-     * milik patrol point yang sedang dipatroli.
-     */
     const assignment = await this.prisma.patrolPointNfc.findFirst({
       where: {
         nfcTagId: nfcTag.id,
@@ -101,14 +81,6 @@ export class NfcValidationService {
       });
     }
 
-    /**
-     * Simpan snapshot NFC ke patrol.
-     *
-     * Penting:
-     * jangan hanya menyimpan relasi NFC.
-     *
-     * UID snapshot dibutuhkan untuk historical evidence.
-     */
     const updated = await this.prisma.patrol.update({
       where: {
         id: patrolId,

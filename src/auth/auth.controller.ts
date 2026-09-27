@@ -7,6 +7,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RefreshTokenDto } from './dto/refresh-token.dto.js';
 import { RegisterDto } from './dto/register.js';
+import type { AuthUser } from './interfaces/auth-user.interface.js';
 
 @Controller('auth')
 export class AuthController {
@@ -40,13 +41,10 @@ export class AuthController {
     return this.authService.getMe(userId);
   }
 
-  @UseGuards(JwtAuthGuard)
   @Post('logout')
-  logout(
-    @CurrentUser('sessionId')
-    sessionId: string,
-  ) {
-    return this.authService.logout(sessionId);
+  @UseGuards(JwtAuthGuard)
+  logout(@CurrentUser() user: AuthUser) {
+    return this.authService.logout(user.id, user.sessionId);
   }
 
   @UseGuards(JwtAuthGuard)

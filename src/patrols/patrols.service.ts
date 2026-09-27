@@ -32,9 +32,6 @@ export class PatrolsService {
       });
     }
 
-    /**
-     * Pastikan patrol milik satpam.
-     */
     if (patrol.userId !== userId) {
       throw new UnprocessableEntityException({
         code: 'PATROL_ACCESS_DENIED',
@@ -42,10 +39,6 @@ export class PatrolsService {
       });
     }
 
-    /**
-     * Patrol yang sudah selesai tidak dapat
-     * dimodifikasi.
-     */
     if (patrol.status === 'SUBMITTED') {
       throw new UnprocessableEntityException({
         code: 'PATROL_ALREADY_SUBMITTED',
@@ -53,11 +46,6 @@ export class PatrolsService {
       });
     }
 
-    /**
-     * RULE UTAMA:
-     *
-     * Bypass NFC TIDAK berarti bypass GPS.
-     */
     if (patrol.gpsValidationStatus !== 'VALID') {
       throw new UnprocessableEntityException({
         code: 'GPS_REQUIRED',
@@ -65,10 +53,6 @@ export class PatrolsService {
       });
     }
 
-    /**
-     * Kalau NFC sebenarnya sudah valid,
-     * tidak perlu bypass.
-     */
     if (patrol.nfcValidationStatus === 'VALID') {
       throw new UnprocessableEntityException({
         code: 'NFC_ALREADY_VALID',
@@ -76,9 +60,6 @@ export class PatrolsService {
       });
     }
 
-    /**
-     * OTHER wajib mempunyai note.
-     */
     if (dto.reason === 'OTHER' && !dto.note?.trim()) {
       throw new UnprocessableEntityException({
         code: 'NFC_BYPASS_NOTE_REQUIRED',
@@ -86,9 +67,6 @@ export class PatrolsService {
       });
     }
 
-    /**
-     * Simpan bypass.
-     */
     const updated = await this.prisma.patrol.update({
       where: {
         id: patrolId,
@@ -168,9 +146,6 @@ export class PatrolsService {
       dto.accuracy,
     );
 
-    /**
-     * Simpan hasil GPS ke patrol.
-     */
     await this.prisma.patrol.update({
       where: {
         id: patrolId,
@@ -191,9 +166,6 @@ export class PatrolsService {
       },
     });
 
-    /**
-     * Jika di luar radius → reject.
-     */
     if (!result.valid) {
       throw new UnprocessableEntityException({
         code: 'GPS_OUTSIDE_RADIUS',
@@ -222,9 +194,6 @@ export class PatrolsService {
   }
 
   async validateNfc(patrolId: string, userId: string, uid: string) {
-    /**
-     * GPS harus sudah valid.
-     */
     const patrol = await this.prisma.patrol.findUnique({
       where: {
         id: patrolId,

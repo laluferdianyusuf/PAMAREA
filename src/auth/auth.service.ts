@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -11,10 +12,15 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service.js';
 
 import { LoginDto } from './dto/login.dto.js';
+import { RegisterDto } from './dto/register.js';
 
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
-import { RegisterDto } from './dto/register.js';
+
+import { generateEmployeeNumber } from '../common/utils/employee-number.util.js';
+import { Prisma } from '../generated/prisma/client.js';
+import { UserStatus } from '../generated/prisma/enums.js';
+import { RefreshTokenPayload } from './interfaces/refresh-token.interface.js';
 
 @Injectable()
 export class AuthService {
@@ -47,18 +53,6 @@ export class AuthService {
       }
     }
 
-    if (dto.employeeNumber) {
-      const existingEmployee = await this.prisma.user.findUnique({
-        where: {
-          employeeNumber: dto.employeeNumber,
-        },
-      });
-
-      if (existingEmployee) {
-        throw new ConflictException('Employee number sudah digunakan');
-      }
-    }
-
     const role = await this.prisma.role.findUnique({
       where: {
         id: dto.roleId,
@@ -85,37 +79,51 @@ export class AuthService {
       }
     }
 
+    const employeeNumber = await this.generateUniqueEmployeeNumber(role.name);
+
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
-    const user = await this.prisma.user.create({
-      data: {
-        roleId: dto.roleId,
-        siteId: dto.siteId,
-        createdById,
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          roleId: dto.roleId,
+          siteId: dto.siteId ?? null,
+          createdById: createdById ?? null,
 
-        employeeNumber: dto.employeeNumber,
+          employeeNumber,
 
-        fullName: dto.fullName,
-        username: dto.username,
-        email: dto.email,
-        phone: dto.phone,
+          fullName: dto.fullName,
+          username: dto.username,
+          email: dto.email ?? null,
+          phone: dto.phone ?? null,
 
-        passwordHash,
+          passwordHash,
 
-        status: 'ACTIVE',
-      },
+          status: UserStatus.ACTIVE,
+        },
 
-      include: {
-        role: true,
-        site: true,
-      },
-    });
+        include: {
+          role: true,
+          site: true,
+        },
+      });
 
-    return {
-      message: 'User berhasil didaftarkan',
+      return {
+        message: 'User berhasil didaftarkan',
+        data: this.sanitizeUser(user),
+      };
+    } catch (error: any) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Username, email, atau employee number sudah digunakan',
+        );
+      }
 
-      data: this.sanitizeUser(user),
-    };
+      throw new InternalServerErrorException('Gagal mendaftarkan user');
+    }
   }
 
   async login(dto: LoginDto) {
@@ -135,7 +143,7 @@ export class AuthService {
       throw new UnauthorizedException('Username atau password salah');
     }
 
-    if (user.status !== 'ACTIVE') {
+    if (user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('User tidak aktif');
     }
 
@@ -180,7 +188,6 @@ export class AuthService {
 
       data: {
         accessToken: tokens.accessToken,
-
         refreshToken: tokens.refreshToken,
 
         expiresIn: 900,
@@ -191,12 +198,15 @@ export class AuthService {
   }
 
   async refresh(refreshToken: string) {
-    let payload: any;
+    let payload: RefreshTokenPayload;
 
     try {
-      payload = await this.jwtService.verifyAsync(refreshToken, {
-        secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
-      });
+      payload = await this.jwtService.verifyAsync<RefreshTokenPayload>(
+        refreshToken,
+        {
+          secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
+        },
+      );
     } catch {
       throw new UnauthorizedException('Refresh token tidak valid atau expired');
     }
@@ -228,7 +238,7 @@ export class AuthService {
       throw new UnauthorizedException('Session sudah logout');
     }
 
-    if (session.expiresAt < new Date()) {
+    if (session.expiresAt <= new Date()) {
       throw new UnauthorizedException('Session sudah expired');
     }
 
@@ -240,8 +250,13 @@ export class AuthService {
 
     const user = session.user;
 
-    if (user.status !== 'ACTIVE' || user.deletedAt) {
+    if (user.status !== UserStatus.ACTIVE || user.deletedAt) {
       throw new UnauthorizedException('User tidak aktif');
+    }
+
+    // Pastikan token memang milik session/user yang sama.
+    if (payload.sub !== user.id) {
+      throw new UnauthorizedException('Refresh token tidak valid');
     }
 
     const tokens = await this.generateTokens(user.id, session.id);
@@ -265,7 +280,6 @@ export class AuthService {
 
       data: {
         accessToken: tokens.accessToken,
-
         refreshToken: tokens.refreshToken,
 
         expiresIn: 900,
@@ -273,7 +287,7 @@ export class AuthService {
     };
   }
 
-  async logout(sessionId: string) {
+  async logout(userId: string, sessionId: string) {
     const session = await this.prisma.session.findUnique({
       where: {
         id: sessionId,
@@ -282,6 +296,10 @@ export class AuthService {
 
     if (!session) {
       throw new NotFoundException('Session tidak ditemukan');
+    }
+
+    if (session.userId !== userId) {
+      throw new UnauthorizedException('Session tidak valid');
     }
 
     if (!session.revokedAt) {
@@ -337,7 +355,7 @@ export class AuthService {
       throw new NotFoundException('User tidak ditemukan');
     }
 
-    if (user.status !== 'ACTIVE') {
+    if (user.status !== UserStatus.ACTIVE) {
       throw new UnauthorizedException('User tidak aktif');
     }
 
@@ -383,8 +401,35 @@ export class AuthService {
     };
   }
 
-  private sanitizeUser(user: any) {
-    const { passwordHash, ...safeUser } = user;
+  private async generateUniqueEmployeeNumber(
+    roleName: Parameters<typeof generateEmployeeNumber>[0],
+  ): Promise<string> {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const employeeNumber = generateEmployeeNumber(roleName);
+
+      const existing = await this.prisma.user.findUnique({
+        where: {
+          employeeNumber,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (!existing) {
+        return employeeNumber;
+      }
+    }
+
+    throw new InternalServerErrorException(
+      'Gagal membuat employee number unik',
+    );
+  }
+
+  private sanitizeUser<T extends { passwordHash: string }>(
+    user: T,
+  ): Omit<T, 'passwordHash'> {
+    const { passwordHash: _passwordHash, ...safeUser } = user;
 
     return safeUser;
   }

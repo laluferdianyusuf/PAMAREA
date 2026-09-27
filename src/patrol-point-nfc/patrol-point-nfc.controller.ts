@@ -13,6 +13,7 @@ import { PatrolPointNfcService } from './patrol-point-nfc.service.js';
 
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { AssignNfcDto } from './dto/assign-nfc.dto.js';
 import { RemoveNfcAssignmentDto } from './dto/remove-nfc-assignment.dto.js';
 import { ReplaceNfcAssignmentDto } from './dto/replace-nfc-assignment.dto.js';
@@ -23,8 +24,8 @@ export class PatrolPointNfcController {
   constructor(private readonly service: PatrolPointNfcService) {}
 
   @Post()
-  assign(@Body() dto: AssignNfcDto, @CurrentUser() user: any) {
-    return this.service.assign(dto, user.userId);
+  assign(@Body() dto: AssignNfcDto, @CurrentUser() user: User) {
+    return this.service.assign(dto, user.id);
   }
 
   @Get()
@@ -77,7 +78,7 @@ export class PatrolPointNfcController {
     @Body()
     dto: ReplaceNfcAssignmentDto,
 
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
   ) {
     return this.service.replace(id, dto);
   }

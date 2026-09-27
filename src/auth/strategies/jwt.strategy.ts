@@ -46,9 +46,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('User tidak aktif');
     }
 
-    /**
-     * Pastikan session belum logout.
-     */
     const session = await this.prisma.session.findUnique({
       where: {
         id: payload.sessionId,

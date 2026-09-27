@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { AssignmentStatus } from '../generated/prisma/enums.js';
 import { PatrolAssignmentService } from './assignments.service.js';
 import { CreatePatrolAssignmentDto } from './dto/create-assignments.dto.js';
@@ -21,8 +22,8 @@ export class PatrolAssignmentController {
   constructor(private readonly service: PatrolAssignmentService) {}
 
   @Post()
-  create(@Body() dto: CreatePatrolAssignmentDto, @CurrentUser() user: any) {
-    return this.service.create(dto, user.userId);
+  create(@Body() dto: CreatePatrolAssignmentDto, @CurrentUser() user: User) {
+    return this.service.create(dto, user.id);
   }
 
   @Get()

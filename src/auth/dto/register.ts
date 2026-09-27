@@ -18,11 +18,6 @@ export class RegisterDto {
   siteId?: string;
 
   @IsString()
-  @IsOptional()
-  @MaxLength(50)
-  employeeNumber?: string;
-
-  @IsString()
   @IsNotEmpty()
   @MaxLength(150)
   fullName: string;

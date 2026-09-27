@@ -59,7 +59,7 @@ export class SitesService {
     };
   }
 
-  async createSite(dto: CreateSitesDto) {
+  async createSite(dto: CreateSitesDto, createdById: string) {
     try {
       const existing = await this.prisma.site.findUnique({
         where: {
@@ -73,6 +73,7 @@ export class SitesService {
 
       const created = await this.prisma.site.create({
         data: {
+          createdById: createdById,
           code: dto.code,
           name: dto.name,
           address: dto.address,

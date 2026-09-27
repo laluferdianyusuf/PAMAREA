@@ -9,12 +9,6 @@ export interface GpsValidationResult {
 
 @Injectable()
 export class GpsValidationService {
-  /**
-   * Menghitung jarak antara dua koordinat GPS
-   * menggunakan Haversine Formula.
-   *
-   * Return dalam meter.
-   */
   calculateDistance(
     latitude1: number,
     longitude1: number,

@@ -1,5 +1,6 @@
 import { Body, Controller, Param, Post } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
+import type { User } from '../generated/prisma/client.js';
 import { BypassNfcDto } from './dto/bypass-nfc.dto.js';
 import { ValidateLocationDto } from './dto/validate-location.dto.js';
 import { ValidateNfcDto } from './dto/validate-nfc.dto.js';
@@ -13,7 +14,7 @@ export class PatrolsController {
   async validateLocation(
     @Param('id') patrolId: string,
 
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
 
     @Body() dto: ValidateLocationDto,
   ) {
@@ -30,7 +31,7 @@ export class PatrolsController {
   async validateNfc(
     @Param('id') patrolId: string,
 
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
 
     @Body() dto: ValidateNfcDto,
   ) {
@@ -39,7 +40,7 @@ export class PatrolsController {
 
       message: 'NFC berhasil divalidasi',
 
-      //   data: await this.patrolsService.validateNfc(patrolId, user.id, dto.uid),
+      data: await this.patrolsService.validateNfc(patrolId, user.id, dto.uid),
     };
   }
 
@@ -47,7 +48,7 @@ export class PatrolsController {
   async bypassNfc(
     @Param('id') patrolId: string,
 
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
 
     @Body() dto: BypassNfcDto,
   ) {

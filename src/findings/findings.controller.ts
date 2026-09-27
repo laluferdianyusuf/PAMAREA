@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { AddFindingPhotoDto } from './dto/add-finding-photo.dto.js';
 import { AssignFindingDto } from './dto/assign-finding.dto.js';
 import { CreateFindingDto } from './dto/create-finding.dto.js';
@@ -25,7 +26,7 @@ export class FindingsController {
   constructor(private readonly findingsService: FindingsService) {}
 
   @Post()
-  create(@CurrentUser() user: any, @Body() dto: CreateFindingDto) {
+  create(@CurrentUser() user: User, @Body() dto: CreateFindingDto) {
     return this.findingsService.create(dto, user.id);
   }
 
@@ -58,7 +59,7 @@ export class FindingsController {
   resolve(
     @Param('id') id: string,
     @Body() dto: ResolveFindingDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: User,
   ) {
     return this.findingsService.resolve(id, dto, user.id);
   }
