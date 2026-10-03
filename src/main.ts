@@ -5,9 +5,17 @@ import { AppModule } from './app.module.js';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  const config = await new ConfigService();
+
+  const config = app.get(ConfigService);
 
   app.setGlobalPrefix('api/v1');
+
+  app.enableCors({
+    origin: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    credentials: true,
+  });
 
   app.useGlobalPipes(
     new ValidationPipe({
@@ -17,9 +25,11 @@ async function bootstrap() {
     }),
   );
 
-  console.log(`Server running on http://localhost:${config.get('PORT')}`);
+  const port = config.get<number>('PORT') ?? 2026;
 
-  await app.listen(config.get('PORT') ?? 2026);
+  await app.listen(port, '0.0.0.0');
+
+  console.log(`Server running on http://localhost:${port}`);
 }
 
 bootstrap();

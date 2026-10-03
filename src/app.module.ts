@@ -10,6 +10,7 @@ import { PatrolPointNfcModule } from './patrol-point-nfc/patrol-point-nfc.module
 import { PatrolPointsModule } from './patrol-points/patrol-points.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RolesModule } from './roles/roles.module.js';
+import { PatrolScheduleModule } from './schedule/patrol.schedule.module.js';
 import { SitesModule } from './sites/sites.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -36,6 +37,8 @@ import { UsersModule } from './users/users.module.js';
     FindingsModule,
 
     RolesModule,
+
+    PatrolScheduleModule,
   ],
   controllers: [AppController],
   providers: [AppService],

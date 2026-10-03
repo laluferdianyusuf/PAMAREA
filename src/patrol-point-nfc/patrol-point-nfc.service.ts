@@ -89,7 +89,7 @@ export class PatrolPointNfcService {
 
             assignedAt: new Date(),
 
-            createdBy: createdById,
+            createdById: createdById,
           },
 
           include: this.assignmentInclude(),
@@ -370,7 +370,7 @@ export class PatrolPointNfcService {
 
             reason: dto.reason?.trim() || 'NFC replacement',
 
-            createdBy: oldAssignment.createdBy,
+            createdById: oldAssignment.createdById,
           },
 
           include: this.assignmentInclude(),
@@ -473,7 +473,7 @@ export class PatrolPointNfcService {
         },
       },
 
-      creator: {
+      createdBy: {
         select: {
           id: true,
           username: true,

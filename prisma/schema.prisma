@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -79,12 +74,99 @@ enum QuestionStatus {
   INACTIVE
 }
 
+// ============================================================
+// NEW
+// ============================================================
+// Status khusus untuk Schedule.
+// Sebelumnya Schedule menggunakan AssignmentStatus.
+// Lebih baik dipisahkan karena lifecycle Schedule berbeda
+// dengan lifecycle Assignment.
+enum ScheduleStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+// ============================================================
+// NEW
+// ============================================================
+// Menunjukkan status tanggal schedule.
+//
+// Contoh:
+// Schedule "Shift Pagi"
+// 01 Oktober → SCHEDULED
+// 02 Oktober → SCHEDULED
+// 03 Oktober → CANCELLED
+enum ScheduleDateStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
+// ============================================================
+// NEW
+// ============================================================
+// Status assignment user terhadap schedule.
+enum ScheduleAssignmentStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+// ============================================================
+// NEW
+// ============================================================
+// Status satu round.
+//
+// Contoh:
+// 09:00 - 11:00
+//
+// Jika semua titik selesai:
+// COMPLETED
+//
+// Jika sebagian selesai:
+// PARTIAL
+//
+// Jika tidak ada patroli:
+// MISSED
+enum PatrolRoundStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  PARTIAL
+  MISSED
+  CANCELLED
+}
+
+// ============================================================
+// NEW
+// ============================================================
+// Status kewajiban satu titik dalam satu round.
+//
+// Contoh:
+// Round 1
+// ├── Gerbang     COMPLETED
+// ├── Parkiran    COMPLETED
+// ├── Gudang      MISSED
+// └── Belakang    COMPLETED
+enum PatrolCheckpointStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  LATE
+  MISSED
+  FAILED
+  CANCELLED
+}
+
 enum PatrolStatus {
   STARTED
   VALIDATED
   IN_PROGRESS
   SUBMITTED
   FAILED
+  CANCELLED
 }
 
 enum GpsValidationStatus {
@@ -121,7 +203,7 @@ enum FindingStatus {
 }
 
 // ============================================================
-// ROLES
+// ROLE
 // ============================================================
 
 model Role {
@@ -138,119 +220,150 @@ model Role {
 }
 
 // ============================================================
-// SITES
+// SITE
 // ============================================================
 
 model Site {
-  id          String     @id @default(uuid()) @db.Uuid
-  createdById String?    @map("created_by_id") @db.Uuid
-  code        String     @unique @db.VarChar(50)
-  name        String     @db.VarChar(150)
-  address     String?
-  latitude    Decimal?   @db.Decimal(10, 7)
-  longitude   Decimal?   @db.Decimal(10, 7)
-  status      SiteStatus @default(ACTIVE)
+  id String @id @default(uuid()) @db.Uuid
 
-  users     User[]           @relation("UserSite")
-  createdBy User?            @relation("SiteCreator", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  points    PatrolPoint[]
-  patrols   Patrol[]
+  createdById String? @map("created_by_id") @db.Uuid
+
+  code String @unique @db.VarChar(50)
+  name String @db.VarChar(150)
+
+  address String?
+
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+
+  status SiteStatus @default(ACTIVE)
+
+  createdBy User? @relation("SiteCreator", fields: [createdById], references: [id])
+
+  users User[]
+
+  patrolPoints PatrolPoint[]
+
   schedules PatrolSchedule[]
+
+  patrols Patrol[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([name])
   @@index([status])
+  @@index([createdById])
   @@map("sites")
 }
 
 // ============================================================
-// USERS
+// USER
 // ============================================================
 
 model User {
-  id          String  @id @default(uuid()) @db.Uuid
-  roleId      String  @map("role_id") @db.Uuid
-  siteId      String? @map("site_id") @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
+  roleId String @map("role_id") @db.Uuid
+
+  siteId String? @map("site_id") @db.Uuid
+
   createdById String? @map("created_by_id") @db.Uuid
 
   employeeNumber String? @unique @map("employee_number") @db.VarChar(50)
-  fullName       String  @map("full_name") @db.VarChar(150)
-  username       String  @unique @db.VarChar(100)
-  email          String? @unique @db.VarChar(150)
-  phone          String? @db.VarChar(30)
-  passwordHash   String  @map("password_hash")
 
-  status      UserStatus @default(ACTIVE)
-  lastLoginAt DateTime?  @map("last_login_at")
-  deletedAt   DateTime?  @map("deleted_at")
+  fullName String @map("full_name") @db.VarChar(150)
+
+  username String @unique @db.VarChar(100)
+
+  email String? @unique @db.VarChar(150)
+
+  phone String? @db.VarChar(30)
+
+  passwordHash String @map("password_hash")
+
+  status UserStatus @default(ACTIVE)
+
+  lastLoginAt DateTime? @map("last_login_at")
+
+  deletedAt DateTime? @map("deleted_at")
 
   // Relations
-  role Role @relation(fields: [roleId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  role Role @relation(fields: [roleId], references: [id])
 
-  site Site? @relation("UserSite", fields: [siteId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  site Site? @relation(fields: [siteId], references: [id])
 
-  // User yang membuat user ini
-  createdBy User? @relation("UserCreator", fields: [createdById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy User? @relation("UserCreator", fields: [createdById], references: [id])
 
-  // User yang dibuat oleh user ini
   createdUsers User[] @relation("UserCreator")
 
   sessions Session[]
 
   devices UserDevice[]
 
-  assignments        PatrolAssignment[] @relation("AssignedSecurity")
-  createdAssignments PatrolAssignment[] @relation("AssignmentCreator")
+  patrolAssignments PatrolAssignment[] @relation("UserPatrolAssignment")
+
+  scheduleAssignments PatrolScheduleAssignment[] @relation("ScheduleAssignedSecurity")
+
+  createdScheduleAssignments PatrolScheduleAssignment[] @relation("ScheduleAssignmentCreator")
 
   patrols Patrol[]
 
-  questionsCreated Question[] @relation("QuestionCreator")
+  questionsCreated Question[]
 
   findingsReported Finding[] @relation("FindingReporter")
+
   findingsAssigned Finding[] @relation("FindingAssignee")
+
   findingsResolved Finding[] @relation("FindingResolver")
 
   auditLogs AuditLog[]
 
-  createdNfcAssignments PatrolPointNfc[] @relation("NfcAssignmentCreator")
-  createdSchedules      PatrolSchedule[] @relation("ScheduleCreator")
-  createdPointQuestions PointQuestion[]  @relation("PointQuestionCreator")
-  createdPatrolPoints   PatrolPoint[]    @relation("PatrolPointCreator")
-  createdNfcTags        NfcTag[]         @relation("NfcTagCreator")
+  createdNfcAssignments PatrolPointNfc[]
+
+  createdSchedules PatrolSchedule[]
+
+  createdPointQuestions PointQuestion[]
+
+  createdPatrolPoints PatrolPoint[]
+
+  createdNfcTags NfcTag[]
 
   createdSites Site[] @relation("SiteCreator")
+
+  createdBySchedules PatrolSchedule[] @relation("ScheduleCreator")
+
+  createdPatrolAssignments PatrolAssignment[] @relation("CreatedByPatrolAssignment")
+
+  createdScheduleDates PatrolScheduleDate[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([roleId])
   @@index([siteId])
-  @@index([createdById])
   @@index([status])
   @@index([deletedAt])
-  @@index([fullName])
   @@map("users")
 }
 
 // ============================================================
-// USER SESSION
+// SESSION
 // ============================================================
 
 model Session {
-  id     String @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
   userId String @map("user_id") @db.Uuid
 
   refreshTokenHash String @map("refresh_token_hash")
 
-  expiresAt DateTime  @map("expires_at")
+  expiresAt DateTime @map("expires_at")
+
   revokedAt DateTime? @map("revoked_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([userId])
   @@index([expiresAt])
@@ -259,16 +372,17 @@ model Session {
 }
 
 // ============================================================
-// USER DEVICES
+// USER DEVICE
 // ============================================================
 
 model UserDevice {
-  id     String @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
   userId String @map("user_id") @db.Uuid
 
   deviceIdentifier String @unique @map("device_identifier") @db.VarChar(255)
 
-  platform   String  @db.VarChar(20)
+  platform   String? @db.VarChar(50)
   model      String? @db.VarChar(100)
   osVersion  String? @map("os_version") @db.VarChar(50)
   appVersion String? @map("app_version") @db.VarChar(50)
@@ -277,7 +391,7 @@ model UserDevice {
 
   lastSeenAt DateTime? @map("last_seen_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   patrols Patrol[]
 
@@ -290,15 +404,20 @@ model UserDevice {
 }
 
 // ============================================================
-// PATROL POINTS
+// PATROL POINT
 // ============================================================
 
 model PatrolPoint {
-  id     String @id @default(uuid()) @db.Uuid
+  id String @id @default(uuid()) @db.Uuid
+
   siteId String @map("site_id") @db.Uuid
 
-  code        String  @db.VarChar(50)
-  name        String  @db.VarChar(150)
+  createdById String @map("created_by_id") @db.Uuid
+
+  code String @db.VarChar(50)
+
+  name String @db.VarChar(150)
+
   description String?
 
   latitude  Decimal @db.Decimal(10, 7)
@@ -308,7 +427,11 @@ model PatrolPoint {
 
   status PatrolPointStatus @default(ACTIVE)
 
-  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  deletedAt DateTime? @map("deleted_at")
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  createdBy User @relation(fields: [createdById], references: [id])
 
   nfcAssignments PatrolPointNfc[]
 
@@ -320,42 +443,39 @@ model PatrolPoint {
 
   findings Finding[]
 
-  createdBy String? @map("created_by") @db.Uuid
+  schedulePoints PatrolSchedulePoint[]
 
-  creator User? @relation("PatrolPointCreator", fields: [createdBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  checkpoints PatrolCheckpoint[]
 
-  createdAt            DateTime              @default(now()) @map("created_at")
-  updatedAt            DateTime              @updatedAt @map("updated_at")
-  deletedAt            DateTime?             @map("deleted_at")
-  patrolSchedulePoints PatrolSchedulePoint[]
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([siteId, code])
   @@index([siteId])
   @@index([status])
-  @@index([name])
-  @@index([deletedAt])
   @@map("patrol_points")
 }
 
 // ============================================================
-// NFC TAGS
+// NFC TAG
 // ============================================================
 
 model NfcTag {
   id String @id @default(uuid()) @db.Uuid
 
-  uid   String  @unique @db.VarChar(255)
+  uid String @unique @db.VarChar(255)
+
   label String? @db.VarChar(100)
 
   status NfcStatus @default(UNASSIGNED)
 
+  createdById String @map("created_by_id") @db.Uuid
+
+  createdBy User @relation(fields: [createdById], references: [id])
+
   assignments PatrolPointNfc[]
 
   patrols Patrol[]
-
-  createdBy String? @map("created_by") @db.Uuid
-
-  creator User? @relation("NfcTagCreator", fields: [createdBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -365,61 +485,63 @@ model NfcTag {
 }
 
 // ============================================================
-// PATROL POINT <-> NFC HISTORY
+// PATROL POINT NFC HISTORY
 // ============================================================
 
 model PatrolPointNfc {
   id String @id @default(uuid()) @db.Uuid
 
   patrolPointId String @map("patrol_point_id") @db.Uuid
-  nfcTagId      String @map("nfc_tag_id") @db.Uuid
 
-  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  nfcTagId String @map("nfc_tag_id") @db.Uuid
+
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
   unassignedAt DateTime? @map("unassigned_at")
 
   status NfcAssignmentStatus @default(ACTIVE)
 
   reason String?
 
-  createdBy String @map("created_by") @db.Uuid
+  createdById String @map("created_by_id") @db.Uuid
 
-  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  nfcTag NfcTag @relation(fields: [nfcTagId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  nfcTag NfcTag @relation(fields: [nfcTagId], references: [id])
 
-  creator User @relation("NfcAssignmentCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
 
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([patrolPointId, status])
   @@index([nfcTagId, status])
-  @@index([assignedAt])
-  @@index([unassignedAt])
   @@map("patrol_point_nfc")
 }
 
 // ============================================================
-// PATROL ASSIGNMENTS
+// OLD PATROL ASSIGNMENT
 // ============================================================
 
 model PatrolAssignment {
   id String @id @default(uuid()) @db.Uuid
 
-  userId        String @map("user_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
   patrolPointId String @map("patrol_point_id") @db.Uuid
 
-  startDate DateTime  @map("start_date") @db.Date
-  endDate   DateTime? @map("end_date") @db.Date
+  startDate DateTime @map("start_date") @db.Date
+
+  endDate DateTime? @map("end_date") @db.Date
 
   status AssignmentStatus @default(ACTIVE)
 
-  createdBy String @map("created_by") @db.Uuid
+  createdById String @map("created_by_id") @db.Uuid
 
-  user User @relation("AssignedSecurity", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user User @relation("UserPatrolAssignment", fields: [userId], references: [id])
 
-  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  creator User @relation("AssignmentCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy User @relation("CreatedByPatrolAssignment", fields: [createdById], references: [id])
 
   patrols Patrol[]
 
@@ -428,19 +550,19 @@ model PatrolAssignment {
 
   @@index([userId, status])
   @@index([patrolPointId, status])
-  @@index([startDate])
-  @@index([endDate])
+  @@index([startDate, endDate])
   @@map("patrol_assignments")
 }
 
 // ============================================================
-// QUESTIONS
+// QUESTION
 // ============================================================
 
 model Question {
   id String @id @default(uuid()) @db.Uuid
 
-  code         String @unique @db.VarChar(50)
+  code String @unique @db.VarChar(50)
+
   questionText String @map("question_text")
 
   questionType QuestionType @map("question_type")
@@ -451,9 +573,9 @@ model Question {
 
   status QuestionStatus @default(ACTIVE)
 
-  createdBy String @map("created_by") @db.Uuid
+  createdById String @map("created_by_id") @db.Uuid
 
-  creator User @relation("QuestionCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
 
   options QuestionOption[]
 
@@ -464,15 +586,12 @@ model Question {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([questionType])
   @@index([status])
-   @@index([createdBy])
-
   @@map("questions")
 }
 
 // ============================================================
-// QUESTION OPTIONS
+// QUESTION OPTION
 // ============================================================
 
 model QuestionOption {
@@ -481,79 +600,528 @@ model QuestionOption {
   questionId String @map("question_id") @db.Uuid
 
   value String @db.VarChar(100)
+
   label String @db.VarChar(150)
 
   sortOrder Int @default(0) @map("sort_order")
 
-  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
 
-@@unique([questionId, value])
+  @@index([questionId])
   @@index([questionId, sortOrder])
-
   @@map("question_options")
 }
 
 // ============================================================
-// POINT QUESTIONS
+// POINT QUESTION
 // ============================================================
 
 model PointQuestion {
   id String @id @default(uuid()) @db.Uuid
 
   patrolPointId String @map("patrol_point_id") @db.Uuid
-  questionId    String @map("question_id") @db.Uuid
 
-  sortOrder  Int     @default(0) @map("sort_order")
+  questionId String @map("question_id") @db.Uuid
+
+  sortOrder Int @default(0) @map("sort_order")
+
   isRequired Boolean @default(true) @map("is_required")
 
-  createdBy String? @map("created_by") @db.Uuid
+  createdById String @map("created_by_id") @db.Uuid
 
-  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  question Question @relation(fields: [questionId], references: [id])
 
-  creator User? @relation("PointQuestionCreator", fields: [createdBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
 
   createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([patrolPointId, questionId])
   @@index([patrolPointId, sortOrder])
   @@index([questionId])
-  @@index([createdBy])
-  
   @@map("point_questions")
 }
 
 // ============================================================
-// PATROLS
+// PATROL SCHEDULE
 // ============================================================
+
+model PatrolSchedule {
+  id String @id @default(uuid()) @db.Uuid
+
+  siteId String @map("site_id") @db.Uuid
+
+  name String @db.VarChar(150)
+
+  startTime String @map("start_time") @db.VarChar(5)
+
+  endTime String @map("end_time") @db.VarChar(5)
+
+  // Jarak waktu antar round dalam menit.
+  //
+  // Contoh:
+  //
+  // start 09:00
+  // interval 120
+  //
+  // Round 1 → 09:00
+  // Round 2 → 11:00
+  //
+  intervalMinutes Int @map("interval_minutes")
+
+  // Toleransi keterlambatan.
+  //
+  // Contoh:
+  // Round dijadwalkan selesai 11:00
+  // grace = 30
+  //
+  // sampai 11:30 masih dianggap dalam toleransi.
+  gracePeriodMinutes Int @default(30) @map("grace_period_minutes")
+
+  // Apakah urutan titik harus mengikuti sequence.
+  //
+  // false:
+  // Budi boleh ke Gudang dulu kemudian Gerbang.
+  //
+  // true:
+  // Budi harus mengikuti urutan SchedulePoint.
+  enforceSequence Boolean @default(false) @map("enforce_sequence")
+
+  // ----------------------------------------------------------
+  // CHANGED
+  // ----------------------------------------------------------
+  // Sebelumnya menggunakan AssignmentStatus.
+  //
+  // Sekarang menggunakan ScheduleStatus karena lifecycle
+  // Schedule berbeda dengan Assignment.
+  status ScheduleStatus @default(DRAFT)
+
+  createdById String @map("created_by_id") @db.Uuid
+
+  site Site @relation(fields: [siteId], references: [id])
+
+  createdBy User @relation("ScheduleCreator", fields: [createdById], references: [id])
+
+  // Daftar PatrolPoint yang wajib ada di setiap Round.
+  points PatrolSchedulePoint[]
+
+  // Tanggal-tanggal schedule aktif.
+  //
+  // Contoh:
+  // Schedule Shift Pagi
+  // ├── 01 Oct
+  // ├── 02 Oct
+  // ├── 03 Oct
+  // └── ...
+  dates PatrolScheduleDate[]
+
+  // User yang ditugaskan ke schedule.
+  assignments PatrolScheduleAssignment[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?  @db.Uuid
+
+  @@index([siteId, status])
+  @@index([createdById])
+  @@map("patrol_schedules")
+}
+
+// ============================================================
+// PATROL SCHEDULE POINT
+// ============================================================
+//
+// Menentukan titik mana saja yang wajib dipatroli
+// dalam SETIAP ROUND.
+//
+// Contoh:
+//
+// Schedule Shift Pagi
+//
+// SchedulePoint:
+// 1. Gerbang
+// 2. Parkiran
+// 3. Gudang
+// 4. Belakang
+// 5. Mesin
+
+model PatrolSchedulePoint {
+  id String @id @default(uuid()) @db.Uuid
+
+  scheduleId String @map("schedule_id") @db.Uuid
+
+  patrolPointId String @map("patrol_point_id") @db.Uuid
+
+  sequence Int @default(0)
+
+  required Boolean @default(true)
+
+  schedule PatrolSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([scheduleId, patrolPointId])
+  @@index([scheduleId, sequence])
+  @@index([patrolPointId])
+  @@map("patrol_schedule_points")
+}
+
+// ============================================================
+// PATROL SCHEDULE DATE
+// ============================================================
+//
+// NEW MODEL.
+//
+// Schedule = template/rule.
+//
+// ScheduleDate = actual date ketika schedule berlaku.
+//
+// Contoh:
+//
+// Schedule:
+// Shift Pagi 09:00 - 12:00
+//
+// ScheduleDate:
+// 01 Oktober
+// 02 Oktober
+// 03 Oktober
+// ...
+// 31 Oktober
+
+model PatrolScheduleDate {
+  id String @id @default(uuid()) @db.Uuid
+
+  scheduleId String @map("schedule_id") @db.Uuid
+
+  date DateTime @db.Date
+
+  status ScheduleDateStatus @default(SCHEDULED)
+
+  schedule PatrolSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  // NEW
+  // Round aktual pada tanggal tersebut.
+  //
+  // Round dibuat untuk setiap ScheduleAssignment.
+  rounds PatrolRound[]
+
+  // NEW
+  // User yang membuat/menghasilkan tanggal schedule.
+  createdById String? @map("created_by_id") @db.Uuid
+
+  createdBy User? @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Satu schedule tidak boleh mempunyai tanggal yang sama
+  // lebih dari satu kali.
+  @@unique([scheduleId, date])
+  @@index([date, status])
+  @@index([scheduleId, status])
+  @@map("patrol_schedule_dates")
+}
+
+// ============================================================
+// PATROL SCHEDULE ASSIGNMENT
+// ============================================================
+//
+// NEW MODEL.
+//
+// Menentukan SIAPA yang bertugas pada Schedule.
+//
+// Contoh:
+//
+// Schedule Shift Pagi
+//
+// 01 - 15 Oktober → Budi
+// 16 - 31 Oktober → Andi
+//
+// Atau:
+//
+// 01 - 31 Oktober → Budi
+// 01 - 31 Oktober → Andi
+//
+// Jika Budi dan Andi sama-sama aktif di tanggal yang sama,
+// maka masing-masing mendapatkan Round dan Checkpoint sendiri.
+
+model PatrolScheduleAssignment {
+  id String @id @default(uuid()) @db.Uuid
+
+  scheduleId String @map("schedule_id") @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+
+  startDate DateTime @map("start_date") @db.Date
+
+  endDate DateTime? @map("end_date") @db.Date
+
+  status ScheduleAssignmentStatus @default(ACTIVE)
+
+  createdById String @map("created_by_id") @db.Uuid
+
+  schedule PatrolSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  user User @relation("ScheduleAssignedSecurity", fields: [userId], references: [id])
+
+  createdBy User @relation("ScheduleAssignmentCreator", fields: [createdById], references: [id])
+
+  // NEW
+  // Round milik user ini.
+  rounds PatrolRound[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  patrols   Patrol[]
+
+  @@unique([scheduleId, userId, startDate])
+  @@index([scheduleId, status])
+  @@index([userId, status])
+  @@index([startDate, endDate])
+  @@map("patrol_schedule_assignments")
+}
+
+// ============================================================
+// PATROL ROUND
+// ============================================================
+//
+// NEW MODEL.
+//
+// Ini adalah SATU PUTARAN patroli.
+//
+// Contoh Schedule:
+//
+// 09:00 - 12:00
+// Interval 2 jam
+//
+// Maka:
+//
+// Round 1 → 09:00 - 11:00
+// Round 2 → 11:00 - 12:00
+//
+// Jika Budi ditugaskan:
+//
+// Round 1 Budi
+// Round 2 Budi
+//
+// Jika Andi juga ditugaskan:
+//
+// Round 1 Andi
+// Round 2 Andi
+//
+// Masing-masing mempunyai checkpoint sendiri.
+
+model PatrolRound {
+  id String @id @default(uuid()) @db.Uuid
+
+  scheduleDateId String @map("schedule_date_id") @db.Uuid
+
+  assignmentId String @map("assignment_id") @db.Uuid
+
+  roundNumber Int @map("round_number")
+
+  // Waktu aktual yang dihitung dari Schedule.
+  //
+  // Contoh:
+  // 2026-10-01 09:00
+  scheduledStartAt DateTime @map("scheduled_start_at")
+
+  // Contoh:
+  // 2026-10-01 11:00
+  scheduledEndAt DateTime @map("scheduled_end_at")
+
+  status PatrolRoundStatus @default(PENDING)
+
+  startedAt DateTime? @map("started_at")
+
+  completedAt DateTime? @map("completed_at")
+
+  scheduleDate PatrolScheduleDate @relation(fields: [scheduleDateId], references: [id], onDelete: Cascade)
+
+  assignment PatrolScheduleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  // Semua titik yang wajib dipatroli
+  // pada round ini.
+  checkpoints PatrolCheckpoint[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([scheduleDateId, assignmentId, roundNumber])
+  @@index([scheduleDateId])
+  @@index([assignmentId])
+  @@index([scheduledStartAt, scheduledEndAt])
+  @@index([status])
+  @@map("patrol_rounds")
+}
+
+// ============================================================
+// PATROL CHECKPOINT
+// ============================================================
+//
+// NEW MODEL.
+//
+// Checkpoint = SATU KEWAJIBAN mengunjungi SATU PatrolPoint
+// dalam SATU Round.
+//
+// Contoh:
+//
+// Round 1
+//
+// Checkpoint:
+// ├── Gerbang
+// ├── Parkiran
+// ├── Gudang
+// ├── Belakang
+// └── Mesin
+//
+// Jadi kalau ada 5 PatrolPoint dan 2 Round:
+//
+// 5 × 2 = 10 Checkpoint.
+//
+// Ini yang memungkinkan sistem mendeteksi titik yang dilewati.
+
+model PatrolCheckpoint {
+  id String @id @default(uuid()) @db.Uuid
+
+  roundId String @map("round_id") @db.Uuid
+
+  patrolPointId String @map("patrol_point_id") @db.Uuid
+
+  sequence Int @default(0)
+
+  required Boolean @default(true)
+
+  status PatrolCheckpointStatus @default(PENDING)
+
+  // ----------------------------------------------------------
+  // SNAPSHOT
+  // ----------------------------------------------------------
+  //
+  // NEW.
+  //
+  // Digunakan supaya histori tetap konsisten walaupun
+  // PatrolPoint nanti diubah nama/code/radius-nya.
+
+  pointCodeSnapshot String @map("point_code_snapshot") @db.VarChar(50)
+
+  pointNameSnapshot String @map("point_name_snapshot") @db.VarChar(150)
+
+  radiusMetersSnapshot Int @map("radius_meters_snapshot")
+
+  visitedAt DateTime? @map("visited_at")
+
+  round PatrolRound @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
+
+  // Actual execution.
+  //
+  // Satu checkpoint normalnya mempunyai maksimal satu
+  // actual Patrol.
+  patrols Patrol[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([roundId, patrolPointId])
+  @@index([roundId, status])
+  @@index([patrolPointId])
+  @@index([status])
+  @@map("patrol_checkpoints")
+}
+
+// ============================================================
+// PATROL
+// ============================================================
+//
+// CHANGED.
+//
+// Sebelumnya:
+//
+// Patrol = satu aktivitas patrol terhadap satu PatrolPoint.
+//
+// Sekarang:
+//
+// Patrol = ACTUAL EXECUTION dari satu PatrolCheckpoint.
+//
+// Jadi:
+//
+// PatrolRound
+//    ↓
+// PatrolCheckpoint
+//    ↓
+// Patrol
+//
+// Patrol menyimpan bukti aktual:
+// - GPS
+// - NFC
+// - waktu
+// - device
+// - validation
+//
+// Dengan model ini, Checkpoint tetap menjadi "kewajiban",
+// sedangkan Patrol menjadi "bukti pelaksanaan".
 
 model Patrol {
   id String @id @default(uuid()) @db.Uuid
 
   reportNumber String @unique @map("report_number") @db.VarChar(50)
 
-  userId        String  @map("user_id") @db.Uuid
-  siteId        String  @map("site_id") @db.Uuid
-  patrolPointId String  @map("patrol_point_id") @db.Uuid
-  assignmentId  String  @map("assignment_id") @db.Uuid
-  deviceId      String? @map("device_id") @db.Uuid
+  userId String @map("user_id") @db.Uuid
 
-  startedAt   DateTime  @default(now()) @map("started_at")
+  siteId String @map("site_id") @db.Uuid
+
+  patrolPointId String @map("patrol_point_id") @db.Uuid
+
+  // ----------------------------------------------------------
+  // CHANGED
+  // ----------------------------------------------------------
+  //
+  // Sebelumnya assignmentId adalah PatrolAssignment.
+  //
+  // Sekarang actual patrol berasal dari ScheduleAssignment.
+  //
+  scheduleAssignmentId String? @map("schedule_assignment_id") @db.Uuid
+
+  // NEW
+  checkpointId String? @map("checkpoint_id") @db.Uuid
+
+  deviceId String? @map("device_id") @db.Uuid
+
+  startedAt DateTime @default(now()) @map("started_at")
+
   completedAt DateTime? @map("completed_at")
 
-  latitude    Decimal? @db.Decimal(10, 7)
-  longitude   Decimal? @db.Decimal(10, 7)
+  // ----------------------------------------------------------
+  // GPS
+  // ----------------------------------------------------------
+
+  latitude Decimal? @db.Decimal(10, 7)
+
+  longitude Decimal? @db.Decimal(10, 7)
+
   gpsAccuracy Decimal? @map("gps_accuracy") @db.Decimal(8, 2)
 
   distanceFromPoint Decimal? @map("distance_from_point") @db.Decimal(10, 2)
 
   gpsValidationStatus GpsValidationStatus @default(UNAVAILABLE) @map("gps_validation_status")
 
+  // ----------------------------------------------------------
+  // NFC
+  // ----------------------------------------------------------
+
   nfcTagId String? @map("nfc_tag_id") @db.Uuid
 
+  // Snapshot UID supaya histori tetap ada walaupun NFC
+  // nantinya diganti.
   nfcUidSnapshot String? @map("nfc_uid_snapshot") @db.VarChar(255)
 
   nfcValidationStatus NfcValidationStatus @default(FAILED) @map("nfc_validation_status")
@@ -566,17 +1134,25 @@ model Patrol {
 
   status PatrolStatus @default(STARTED)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  // ----------------------------------------------------------
+  // RELATIONS
+  // ----------------------------------------------------------
 
-  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user User @relation(fields: [userId], references: [id])
 
-  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  site Site @relation(fields: [siteId], references: [id])
 
-  assignment PatrolAssignment @relation(fields: [assignmentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  device UserDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  // NEW
+  scheduleAssignment PatrolScheduleAssignment? @relation(fields: [scheduleAssignmentId], references: [id])
 
-  nfcTag NfcTag? @relation(fields: [nfcTagId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  // NEW
+  checkpoint PatrolCheckpoint? @relation(fields: [checkpointId], references: [id])
+
+  device UserDevice? @relation(fields: [deviceId], references: [id])
+
+  nfcTag NfcTag? @relation(fields: [nfcTagId], references: [id])
 
   answers PatrolAnswer[]
 
@@ -585,133 +1161,151 @@ model Patrol {
   findings Finding[]
 
   createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
 
-  @@index([userId, startedAt])
-  @@index([siteId, startedAt])
-  @@index([patrolPointId, startedAt])
-  @@index([assignmentId])
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+  patrolAssignment   PatrolAssignment? @relation(fields: [patrolAssignmentId], references: [id])
+  patrolAssignmentId String?           @db.Uuid
+
+  @@index([userId])
+  @@index([siteId])
+  @@index([patrolPointId])
+  @@index([scheduleAssignmentId])
+  @@index([checkpointId])
   @@index([deviceId])
-  @@index([nfcTagId])
-  @@index([status])
-  @@index([nfcBypass])
   @@index([startedAt])
+  @@index([status])
   @@map("patrols")
 }
 
 // ============================================================
-// PATROL ANSWERS
+// PATROL ANSWER
 // ============================================================
+//
+// Snapshot question tetap dipertahankan.
+//
+// Ini penting karena admin bisa mengubah pertanyaan
+// setelah patroli dilakukan.
 
 model PatrolAnswer {
   id String @id @default(uuid()) @db.Uuid
 
-  patrolId   String @map("patrol_id") @db.Uuid
+  patrolId String @map("patrol_id") @db.Uuid
+
   questionId String @map("question_id") @db.Uuid
 
   questionTextSnapshot String @map("question_text_snapshot")
 
-  answerValue         String? @map("answer_value")
+  answerValue String? @map("answer_value")
+
   answerLabelSnapshot String? @map("answer_label_snapshot")
 
-  patrol Patrol @relation(fields: [patrolId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  patrol Patrol @relation(fields: [patrolId], references: [id], onDelete: Cascade)
 
-  question Question @relation(fields: [questionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  question Question @relation(fields: [questionId], references: [id])
 
   photos PatrolPhoto[]
 
   createdAt DateTime @default(now()) @map("created_at")
 
+  updatedAt DateTime @updatedAt @map("updated_at")
+
   @@unique([patrolId, questionId])
-  @@index([patrolId])
   @@index([questionId])
   @@map("patrol_answers")
 }
 
 // ============================================================
-// PATROL PHOTOS
+// PATROL PHOTO
 // ============================================================
 
 model PatrolPhoto {
   id String @id @default(uuid()) @db.Uuid
 
-  patrolId String  @map("patrol_id") @db.Uuid
+  patrolId String @map("patrol_id") @db.Uuid
+
   answerId String? @map("answer_id") @db.Uuid
 
-  fileUrl  String  @map("file_url")
-  fileName String? @map("file_name") @db.VarChar(255)
-  mimeType String? @map("mime_type") @db.VarChar(100)
-  fileSize BigInt? @map("file_size")
+  fileUrl String @map("file_url")
 
-  latitude  Decimal? @db.Decimal(10, 7)
+  fileName String @map("file_name") @db.VarChar(255)
+
+  mimeType String @map("mime_type") @db.VarChar(100)
+
+  fileSize Int @map("file_size")
+
+  latitude Decimal? @db.Decimal(10, 7)
+
   longitude Decimal? @db.Decimal(10, 7)
 
   capturedAt DateTime? @map("captured_at")
 
-  patrol Patrol @relation(fields: [patrolId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  patrol Patrol @relation(fields: [patrolId], references: [id], onDelete: Cascade)
 
-  answer PatrolAnswer? @relation(fields: [answerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  answer PatrolAnswer? @relation(fields: [answerId], references: [id])
 
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([patrolId])
   @@index([answerId])
-  @@index([capturedAt])
   @@map("patrol_photos")
 }
 
 // ============================================================
-// FINDINGS
+// FINDING
 // ============================================================
 
 model Finding {
   id String @id @default(uuid()) @db.Uuid
 
-  patrolId      String @map("patrol_id") @db.Uuid
+  patrolId String @map("patrol_id") @db.Uuid
+
   patrolPointId String @map("patrol_point_id") @db.Uuid
 
-  reportedBy String @map("reported_by") @db.Uuid
+  reportedById String @map("reported_by") @db.Uuid
 
-  title       String @db.VarChar(200)
-  description String
+  assignedToId String? @map("assigned_to") @db.Uuid
+
+  resolvedById String? @map("resolved_by") @db.Uuid
+
+  title String @db.VarChar(200)
+
+  description String?
 
   severity FindingSeverity @default(MEDIUM)
-  status   FindingStatus   @default(OPEN)
 
-  assignedTo String? @map("assigned_to") @db.Uuid
+  status FindingStatus @default(OPEN)
 
-  resolvedBy     String?   @map("resolved_by") @db.Uuid
-  resolvedAt     DateTime? @map("resolved_at")
-  resolutionNote String?   @map("resolution_note")
+  resolvedAt DateTime? @map("resolved_at")
 
-  patrol Patrol @relation(fields: [patrolId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  resolutionNote String? @map("resolution_note")
 
-  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  patrol Patrol @relation(fields: [patrolId], references: [id], onDelete: Cascade)
 
-  reporter User @relation("FindingReporter", fields: [reportedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  assignee User? @relation("FindingAssignee", fields: [assignedTo], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  reportedBy User @relation("FindingReporter", fields: [reportedById], references: [id])
 
-  resolver User? @relation("FindingResolver", fields: [resolvedBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  assignedTo User? @relation("FindingAssignee", fields: [assignedToId], references: [id])
+
+  resolvedBy User? @relation("FindingResolver", fields: [resolvedById], references: [id])
 
   photos FindingPhoto[]
 
   createdAt DateTime @default(now()) @map("created_at")
+
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([patrolId])
   @@index([patrolPointId])
-  @@index([reportedBy])
-  @@index([assignedTo])
-  @@index([resolvedBy])
+  @@index([reportedById])
+  @@index([assignedToId])
   @@index([status])
   @@index([severity])
-  @@index([createdAt])
   @@map("findings")
 }
 
 // ============================================================
-// FINDING PHOTOS
+// FINDING PHOTO
 // ============================================================
 
 model FindingPhoto {
@@ -719,12 +1313,15 @@ model FindingPhoto {
 
   findingId String @map("finding_id") @db.Uuid
 
-  fileUrl  String  @map("file_url")
-  fileName String? @map("file_name") @db.VarChar(255)
-  mimeType String? @map("mime_type") @db.VarChar(100)
-  fileSize BigInt? @map("file_size")
+  fileUrl String @map("file_url")
 
-  finding Finding @relation(fields: [findingId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  fileName String @map("file_name") @db.VarChar(255)
+
+  mimeType String @map("mime_type") @db.VarChar(100)
+
+  fileSize Int @map("file_size")
+
+  finding Finding @relation(fields: [findingId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -733,87 +1330,47 @@ model FindingPhoto {
 }
 
 // ============================================================
-// AUDIT LOGS
+// AUDIT LOG
 // ============================================================
+//
+// Penting untuk enterprise.
+//
+// Admin melakukan:
+//
+// CREATE Schedule
+// UPDATE Schedule
+// DELETE/CANCEL Schedule
+// Assign User
+// Replace NFC
+// Update Patrol Point
+//
+// Semua dapat dicatat.
 
 model AuditLog {
   id String @id @default(uuid()) @db.Uuid
 
   userId String? @map("user_id") @db.Uuid
 
-  action     String  @db.VarChar(100)
-  entityType String  @map("entity_type") @db.VarChar(100)
-  entityId   String? @map("entity_id") @db.Uuid
+  action String @db.VarChar(100)
+
+  entityType String @map("entity_type") @db.VarChar(100)
+
+  entityId String? @map("entity_id") @db.Uuid
 
   oldData Json? @map("old_data")
+
   newData Json? @map("new_data")
 
-  ipAddress String? @map("ip_address") @db.Inet
+  ipAddress String? @map("ip_address") @db.VarChar(100)
+
   userAgent String? @map("user_agent")
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  user User? @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now()) @map("created_at")
 
-  @@index([userId, createdAt])
-  @@index([action])
+  @@index([userId])
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("audit_logs")
-}
-
-// ============================================================
-// PATROL SCHEDULES - PHASE 2
-// ============================================================
-
-model PatrolSchedule {
-  id String @id @default(uuid()) @db.Uuid
-
-  siteId String @map("site_id") @db.Uuid
-
-  name String @db.VarChar(150)
-
-  startTime String @map("start_time") @db.VarChar(5)
-  endTime   String @map("end_time") @db.VarChar(5)
-
-  status AssignmentStatus @default(ACTIVE)
-
-  createdBy String @map("created_by") @db.Uuid
-
-  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-
-  creator User @relation("ScheduleCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
-
-  points PatrolSchedulePoint[]
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@index([siteId, status])
-  @@map("patrol_schedules")
-}
-
-// ============================================================
-// PATROL SCHEDULE POINTS - PHASE 2
-// ============================================================
-
-model PatrolSchedulePoint {
-  id String @id @default(uuid()) @db.Uuid
-
-  scheduleId    String @map("schedule_id") @db.Uuid
-  patrolPointId String @map("patrol_point_id") @db.Uuid
-
-  sequence Int     @default(0)
-  required Boolean @default(true)
-
-  schedule PatrolSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-
-  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-
-  createdAt DateTime @default(now()) @map("created_at")
-
-  @@unique([scheduleId, patrolPointId])
-  @@index([scheduleId, sequence])
-  @@index([patrolPointId])
-  @@map("patrol_schedule_points")
 }

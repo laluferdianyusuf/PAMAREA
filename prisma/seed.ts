@@ -19,12 +19,6 @@ const prisma = createPrismaClient();
 async function main() {
   console.log('Starting database seed...');
 
-  /*
-   * ============================================================
-   * 1. ROLES
-   * ============================================================
-   */
-
   const adminRole = await prisma.role.upsert({
     where: {
       name: RoleName.ADMIN,
@@ -49,12 +43,6 @@ async function main() {
 
   console.log('Roles created');
 
-  /*
-   * ============================================================
-   * 2. SITE
-   * ============================================================
-   */
-
   const site = await prisma.site.upsert({
     where: {
       code: 'SITE-001',
@@ -75,12 +63,6 @@ async function main() {
   });
 
   console.log(`Site created: ${site.name}`);
-
-  /*
-   * ============================================================
-   * 3. ADMIN
-   * ============================================================
-   */
 
   const adminPassword = await bcrypt.hash('Admin123!', 12);
 
@@ -112,12 +94,6 @@ async function main() {
   });
 
   console.log(`Admin created: ${admin.username}`);
-
-  /*
-   * ============================================================
-   * 4. SATPAM
-   * ============================================================
-   */
 
   const satpamPassword = await bcrypt.hash('Satpam123!', 12);
 
@@ -177,12 +153,6 @@ async function main() {
 
   console.log('Satpam created');
 
-  /*
-   * ============================================================
-   * 5. PATROL POINTS
-   * ============================================================
-   */
-
   const point1 = await prisma.patrolPoint.upsert({
     where: {
       siteId_code: {
@@ -203,7 +173,7 @@ async function main() {
       radiusMeters: 50,
 
       status: PatrolPointStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -227,7 +197,7 @@ async function main() {
       radiusMeters: 50,
 
       status: PatrolPointStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -251,7 +221,7 @@ async function main() {
       radiusMeters: 40,
 
       status: PatrolPointStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -275,7 +245,7 @@ async function main() {
       radiusMeters: 40,
 
       status: PatrolPointStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -299,17 +269,11 @@ async function main() {
       radiusMeters: 50,
 
       status: PatrolPointStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
   console.log('Patrol points created');
-
-  /*
-   * ============================================================
-   * 6. NFC TAGS
-   * ============================================================
-   */
 
   const nfc1 = await prisma.nfcTag.upsert({
     where: {
@@ -320,7 +284,7 @@ async function main() {
       uid: '04A1B2C3D401',
       label: 'NFC Pintu Utama',
       status: NfcStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -333,7 +297,7 @@ async function main() {
       uid: '04A1B2C3D402',
       label: 'NFC Area Parkir',
       status: NfcStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -346,7 +310,7 @@ async function main() {
       uid: '04A1B2C3D403',
       label: 'NFC Lobby',
       status: NfcStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -359,7 +323,7 @@ async function main() {
       uid: '04A1B2C3D404',
       label: 'NFC Lantai 2',
       status: NfcStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -372,17 +336,11 @@ async function main() {
       uid: '04A1B2C3D405',
       label: 'NFC Area Belakang',
       status: NfcStatus.ACTIVE,
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
   console.log('NFC tags created');
-
-  /*
-   * ============================================================
-   * 7. NFC → PATROL POINT
-   * ============================================================
-   */
 
   await prisma.patrolPointNfc.createMany({
     data: [
@@ -393,7 +351,7 @@ async function main() {
         assignedAt: new Date(),
         status: NfcAssignmentStatus.ACTIVE,
 
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point2.id,
@@ -402,7 +360,7 @@ async function main() {
         assignedAt: new Date(),
         status: NfcAssignmentStatus.ACTIVE,
 
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point3.id,
@@ -411,7 +369,7 @@ async function main() {
         assignedAt: new Date(),
         status: NfcAssignmentStatus.ACTIVE,
 
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point4.id,
@@ -420,7 +378,7 @@ async function main() {
         assignedAt: new Date(),
         status: NfcAssignmentStatus.ACTIVE,
 
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point5.id,
@@ -429,19 +387,13 @@ async function main() {
         assignedAt: new Date(),
         status: NfcAssignmentStatus.ACTIVE,
 
-        createdBy: admin.id,
+        createdById: admin.id,
       },
     ],
     skipDuplicates: true,
   });
 
   console.log('NFC assignments created');
-
-  /*
-   * ============================================================
-   * 8. PATROL ASSIGNMENTS
-   * ============================================================
-   */
 
   const today = new Date();
 
@@ -467,7 +419,7 @@ async function main() {
         endDate,
 
         status: AssignmentStatus.ACTIVE,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         userId: satpam1.id,
@@ -477,7 +429,7 @@ async function main() {
         endDate,
 
         status: AssignmentStatus.ACTIVE,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         userId: satpam1.id,
@@ -487,7 +439,7 @@ async function main() {
         endDate,
 
         status: AssignmentStatus.ACTIVE,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
 
       {
@@ -498,7 +450,7 @@ async function main() {
         endDate,
 
         status: AssignmentStatus.ACTIVE,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         userId: satpam2.id,
@@ -508,19 +460,13 @@ async function main() {
         endDate,
 
         status: AssignmentStatus.ACTIVE,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
     ],
     skipDuplicates: true,
   });
 
   console.log('Patrol assignments created');
-
-  /*
-   * ============================================================
-   * 9. QUESTIONS
-   * ============================================================
-   */
 
   const q1 = await prisma.question.create({
     data: {
@@ -533,7 +479,7 @@ async function main() {
 
       status: QuestionStatus.ACTIVE,
 
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -548,7 +494,7 @@ async function main() {
 
       status: QuestionStatus.ACTIVE,
 
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -563,7 +509,7 @@ async function main() {
 
       status: QuestionStatus.ACTIVE,
 
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -578,7 +524,7 @@ async function main() {
 
       status: QuestionStatus.ACTIVE,
 
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
@@ -593,17 +539,11 @@ async function main() {
 
       status: QuestionStatus.ACTIVE,
 
-      createdBy: admin.id,
+      createdById: admin.id,
     },
   });
 
   console.log('Questions created');
-
-  /*
-   * ============================================================
-   * 10. QUESTION OPTIONS
-   * ============================================================
-   */
 
   await prisma.questionOption.createMany({
     data: [
@@ -664,12 +604,6 @@ async function main() {
 
   console.log('Question options created');
 
-  /*
-   * ============================================================
-   * 11. QUESTION → PATROL POINT
-   * ============================================================
-   */
-
   await prisma.pointQuestion.createMany({
     data: [
       // Pintu Utama
@@ -678,21 +612,21 @@ async function main() {
         questionId: q1.id,
         sortOrder: 1,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point1.id,
         questionId: q4.id,
         sortOrder: 2,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point1.id,
         questionId: q5.id,
         sortOrder: 3,
         isRequired: false,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
 
       // Area Parkir
@@ -701,14 +635,14 @@ async function main() {
         questionId: q2.id,
         sortOrder: 1,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point2.id,
         questionId: q4.id,
         sortOrder: 2,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
 
       // Lobby
@@ -717,14 +651,14 @@ async function main() {
         questionId: q3.id,
         sortOrder: 1,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point3.id,
         questionId: q4.id,
         sortOrder: 2,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
 
       // Lantai 2
@@ -733,14 +667,14 @@ async function main() {
         questionId: q4.id,
         sortOrder: 1,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point4.id,
         questionId: q5.id,
         sortOrder: 2,
         isRequired: false,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
 
       // Area Belakang
@@ -749,14 +683,14 @@ async function main() {
         questionId: q4.id,
         sortOrder: 1,
         isRequired: true,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
       {
         patrolPointId: point5.id,
         questionId: q5.id,
         sortOrder: 2,
         isRequired: false,
-        createdBy: admin.id,
+        createdById: admin.id,
       },
     ],
     skipDuplicates: true,

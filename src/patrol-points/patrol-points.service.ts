@@ -48,12 +48,12 @@ export class PatrolPointsService {
         latitude: dto.latitude,
         longitude: dto.longitude,
         radiusMeters: dto.radiusMeters ?? 30,
-        createdBy: createdById,
+        createdById: createdById ?? '',
       },
 
       include: {
         site: true,
-        creator: {
+        createdBy: {
           select: {
             id: true,
             username: true,

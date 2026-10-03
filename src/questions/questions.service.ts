@@ -21,7 +21,7 @@ export class QuestionsService {
 
   private questionInclude() {
     return {
-      creator: {
+      createdBy: {
         select: {
           id: true,
           username: true,
@@ -66,7 +66,7 @@ export class QuestionsService {
         questionType: dto.questionType,
         isRequired: dto.isRequired ?? true,
         photoRequirement: dto.photoRequirement ?? 'NONE',
-        createdBy: createdById,
+        createdById: createdById,
       },
 
       include: this.questionInclude(),

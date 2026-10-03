@@ -34,7 +34,7 @@ export class PointQuestionsService {
         },
       },
 
-      creator: {
+      createdBy: {
         select: {
           id: true,
           username: true,
@@ -97,7 +97,7 @@ export class PointQuestionsService {
         questionId: dto.questionId,
         sortOrder: dto.sortOrder ?? 0,
         isRequired: dto.isRequired ?? question.isRequired,
-        createdBy: createdById,
+        createdById: createdById,
       },
 
       include: this.include(),

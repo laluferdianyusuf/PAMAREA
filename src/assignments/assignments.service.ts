@@ -49,7 +49,7 @@ export class PatrolAssignmentService {
         },
       },
 
-      creator: {
+      createdBy: {
         select: {
           id: true,
           username: true,
@@ -156,7 +156,7 @@ export class PatrolAssignmentService {
             startDate,
             endDate,
             status: AssignmentStatus.ACTIVE,
-            createdBy: createdById,
+            createdById: createdById,
           },
 
           include: this.assignmentInclude(),

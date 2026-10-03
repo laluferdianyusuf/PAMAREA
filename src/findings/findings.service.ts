@@ -55,7 +55,7 @@ export class FindingsService {
       data: {
         patrolId: dto.patrolId,
         patrolPointId: dto.patrolPointId,
-        reportedBy: userId,
+        reportedById: userId,
         title: dto.title.trim(),
         description: dto.description.trim(),
         severity: dto.severity,
@@ -82,8 +82,18 @@ export class FindingsService {
       ...(severity && { severity }),
       ...(patrolId && { patrolId }),
       ...(patrolPointId && { patrolPointId }),
-      ...(reportedBy && { reportedBy }),
-      ...(assignedTo && { assignedTo }),
+
+      ...(reportedBy && {
+        reportedBy: {
+          id: reportedBy,
+        },
+      }),
+
+      ...(assignedTo && {
+        assignedTo: {
+          id: assignedTo,
+        },
+      }),
     };
 
     const skip = (page - 1) * limit;
@@ -218,7 +228,7 @@ export class FindingsService {
     return this.prisma.finding.update({
       where: { id },
       data: {
-        assignedTo: dto.assignedTo,
+        assignedToId: dto.assignedTo,
         status:
           finding.status === FindingStatus.OPEN
             ? FindingStatus.IN_PROGRESS
@@ -250,7 +260,7 @@ export class FindingsService {
       where: { id },
       data: {
         status: FindingStatus.RESOLVED,
-        resolvedBy: userId,
+        resolvedById: userId,
         resolvedAt: new Date(),
         resolutionNote: dto.resolutionNote.trim(),
       },
@@ -283,9 +293,9 @@ export class FindingsService {
       data: {
         findingId,
         fileUrl: dto.fileUrl,
-        fileName: dto.fileName,
-        mimeType: dto.mimeType,
-        fileSize: dto.fileSize,
+        fileName: dto.fileName ?? '',
+        mimeType: dto.mimeType ?? '',
+        fileSize: dto.fileSize ?? 0,
       },
     });
   }

@@ -35,7 +35,7 @@ export class NfcService {
         uid,
         label: dto.label?.trim() || null,
         status: NfcStatus.UNASSIGNED,
-        createdBy: createdById,
+        createdById: createdById,
       },
 
       select: this.detailSelect(),
@@ -376,7 +376,7 @@ export class NfcService {
       createdAt: true,
       updatedAt: true,
 
-      creator: {
+      createdBy: {
         select: {
           id: true,
           username: true,
@@ -402,7 +402,7 @@ export class NfcService {
       createdAt: true,
       updatedAt: true,
 
-      creator: {
+      createdBy: {
         select: {
           id: true,
           username: true,
