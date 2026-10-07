@@ -3,10 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { FindingStatus } from '../generated/prisma/enums.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { AddFindingPhotoDto } from './dto/add-finding-photo.dto.js';
+import { StorageService } from '../storage/storage.service.js';
 import { AssignFindingDto } from './dto/assign-finding.dto.js';
 import { CreateFindingDto } from './dto/create-finding.dto.js';
 import { FindingQueryDto } from './dto/finding-query.dto.js';
@@ -15,7 +16,10 @@ import { UpdateFindingDto } from './dto/update-finding.dto.js';
 
 @Injectable()
 export class FindingsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   async create(dto: CreateFindingDto, userId: string) {
     const patrol = await this.prisma.patrol.findUnique({
@@ -268,7 +272,7 @@ export class FindingsService {
     });
   }
 
-  async addPhoto(findingId: string, dto: AddFindingPhotoDto) {
+  async addPhoto(findingId: string, file: UploadedFile) {
     const finding = await this.prisma.finding.findUnique({
       where: {
         id: findingId,
@@ -280,24 +284,47 @@ export class FindingsService {
     });
 
     if (!finding) {
-      throw new NotFoundException('Finding tidak ditemukan');
+      throw new NotFoundException({
+        code: 'FINDING_NOT_FOUND',
+        message: 'Finding tidak ditemukan',
+      });
     }
 
     if (finding.status === FindingStatus.RESOLVED) {
-      throw new BadRequestException(
-        'Tidak dapat menambahkan foto ke finding yang sudah RESOLVED',
-      );
+      throw new BadRequestException({
+        code: 'FINDING_ALREADY_RESOLVED',
+        message: 'Tidak dapat menambahkan foto ke finding yang sudah RESOLVED',
+      });
     }
 
-    return this.prisma.findingPhoto.create({
+    if (!file) {
+      throw new BadRequestException({
+        code: 'PHOTO_REQUIRED',
+        message: 'File foto wajib diupload',
+      });
+    }
+
+    if (!file.mimetype.startsWith('image/')) {
+      throw new BadRequestException({
+        code: 'INVALID_FILE_TYPE',
+        message: 'File yang diupload harus berupa gambar',
+      });
+    }
+
+    const uploadedFile = await this.storageService.saveImage(file);
+
+    const photo = await this.prisma.findingPhoto.create({
       data: {
         findingId,
-        fileUrl: dto.fileUrl,
-        fileName: dto.fileName ?? '',
-        mimeType: dto.mimeType ?? '',
-        fileSize: dto.fileSize ?? 0,
+
+        fileUrl: uploadedFile.url,
+        fileName: file.originalname,
+        mimeType: file.mimetype,
+        fileSize: file.size,
       },
     });
+
+    return photo;
   }
 
   async removePhoto(findingId: string, photoId: string) {
@@ -363,14 +390,14 @@ export class FindingsService {
   };
 
   private readonly listInclude = {
-    reporter: {
+    reportedBy: {
       select: {
         id: true,
         username: true,
         fullName: true,
       },
     },
-    assignee: {
+    assignedTo: {
       select: {
         id: true,
         username: true,

@@ -27,6 +27,11 @@ export class RegisterDto {
   @MaxLength(100)
   username: string;
 
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  employeeNumber: string;
+
   @IsEmail()
   @IsOptional()
   @MaxLength(150)

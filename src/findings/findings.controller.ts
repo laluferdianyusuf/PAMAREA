@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -7,12 +8,15 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import type { User } from '../generated/prisma/client.js';
-import { AddFindingPhotoDto } from './dto/add-finding-photo.dto.js';
 import { AssignFindingDto } from './dto/assign-finding.dto.js';
 import { CreateFindingDto } from './dto/create-finding.dto.js';
 import { FindingQueryDto } from './dto/finding-query.dto.js';
@@ -64,9 +68,33 @@ export class FindingsController {
     return this.findingsService.resolve(id, dto, user.id);
   }
 
-  @Post(':id/photos')
-  addPhoto(@Param('id') id: string, @Body() dto: AddFindingPhotoDto) {
-    return this.findingsService.addPhoto(id, dto);
+  @Post(':findingId/photos')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: {
+        fileSize: 5 * 1024 * 1024,
+      },
+      fileFilter: (req, file, callback) => {
+        if (!file.mimetype.startsWith('image/')) {
+          return callback(
+            new BadRequestException({
+              code: 'INVALID_FILE_TYPE',
+              message: 'File harus berupa gambar',
+            }),
+            false,
+          );
+        }
+
+        callback(null, true);
+      },
+    }),
+  )
+  async addPhoto(
+    @Param('findingId') findingId: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.findingsService.addPhoto(findingId, file);
   }
 
   @Delete(':id/photos/:photoId')

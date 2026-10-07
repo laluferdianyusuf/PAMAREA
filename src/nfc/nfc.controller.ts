@@ -12,6 +12,7 @@ import {
 
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { NfcStatus } from '../generated/prisma/enums.js';
 import { CreateNfcTagDto } from './dto/create-nfc.dto.js';
 import { ReplaceNfcTagDto } from './dto/replace-nfc.dto.js';
@@ -24,8 +25,8 @@ export class NfcController {
   constructor(private readonly nfcService: NfcService) {}
 
   @Post()
-  create(@Body() dto: CreateNfcTagDto, @CurrentUser() user: any) {
-    return this.nfcService.create(dto, user.userId);
+  create(@Body() dto: CreateNfcTagDto, @CurrentUser() user: User) {
+    return this.nfcService.create(dto, user.id);
   }
 
   @Get()

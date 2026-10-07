@@ -32,7 +32,6 @@ export class PatrolScheduleController {
   }
 
   @Get()
-  @Roles(RoleName.ADMIN)
   findAll(@Query() query: ScheduleFilterDto) {
     return this.service.findAll(query);
   }

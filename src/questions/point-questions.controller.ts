@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { AssignQuestionDto } from './dto/assign-question.dto.js';
 import { UpdatePointQuestionDto } from './dto/update-point-question.dto.js';
 import { PointQuestionsService } from './point-questions.service.js';
@@ -20,8 +21,8 @@ export class PointQuestionsController {
   constructor(private readonly service: PointQuestionsService) {}
 
   @Post()
-  assign(@Body() dto: AssignQuestionDto, @CurrentUser() user: any) {
-    return this.service.assign(dto, user.userId);
+  assign(@Body() dto: AssignQuestionDto, @CurrentUser() user: User) {
+    return this.service.assign(dto, user.id);
   }
 
   @Get('patrol-point/:patrolPointId')

@@ -11,8 +11,8 @@ import { UpdatePatrolPointDto } from './dto/update-patrol-points.dto.js';
 export class PatrolPointsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreatePatrolPointDto, createdById?: string) {
-    const site = await this.prisma.site.findFirst({
+  async create(dto: CreatePatrolPointDto, createdById: string) {
+    const site = await this.prisma.site.findUnique({
       where: {
         id: dto.siteId,
       },
@@ -41,16 +41,24 @@ export class PatrolPointsService {
 
     return this.prisma.patrolPoint.create({
       data: {
-        siteId: dto.siteId,
+        site: {
+          connect: {
+            id: dto.siteId,
+          },
+        },
         code: dto.code,
         name: dto.name,
         description: dto.description,
         latitude: dto.latitude,
         longitude: dto.longitude,
         radiusMeters: dto.radiusMeters ?? 30,
-        createdById: createdById ?? '',
-      },
 
+        createdBy: {
+          connect: {
+            id: createdById,
+          },
+        },
+      },
       include: {
         site: true,
         createdBy: {
@@ -137,7 +145,7 @@ export class PatrolPointsService {
       include: {
         site: true,
 
-        creator: {
+        createdBy: {
           select: {
             id: true,
             username: true,

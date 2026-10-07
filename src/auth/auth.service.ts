@@ -41,6 +41,16 @@ export class AuthService {
       throw new ConflictException('Username sudah digunakan');
     }
 
+    const existingEmployeeNumber = await this.prisma.user.findUnique({
+      where: {
+        employeeNumber: dto.employeeNumber,
+      },
+    });
+
+    if (existingEmployeeNumber) {
+      throw new ConflictException('Nomor security sudah digunakan');
+    }
+
     if (dto.email) {
       const existingEmail = await this.prisma.user.findUnique({
         where: {
@@ -79,8 +89,6 @@ export class AuthService {
       }
     }
 
-    const employeeNumber = await this.generateUniqueEmployeeNumber(role.name);
-
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     try {
@@ -90,7 +98,7 @@ export class AuthService {
           siteId: dto.siteId ?? null,
           createdById: createdById ?? null,
 
-          employeeNumber,
+          employeeNumber: dto.employeeNumber,
 
           fullName: dto.fullName,
           username: dto.username,

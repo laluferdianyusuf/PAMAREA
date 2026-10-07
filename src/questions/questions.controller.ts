@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { QuestionStatus, QuestionType } from '../generated/prisma/enums.js';
 import { CreateQuestionOptionDto } from './dto/create-question-option.dto.js';
 import { CreateQuestionDto } from './dto/create-questions.dto.js';
@@ -23,8 +24,8 @@ export class QuestionsController {
   constructor(private readonly service: QuestionsService) {}
 
   @Post()
-  create(@Body() dto: CreateQuestionDto, @CurrentUser() user: any) {
-    return this.service.create(dto, user.userId);
+  create(@Body() dto: CreateQuestionDto, @CurrentUser() user: User) {
+    return this.service.create(dto, user.id);
   }
 
   @Get()

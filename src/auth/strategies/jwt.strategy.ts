@@ -31,7 +31,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         id: payload.sub,
         deletedAt: null,
       },
-
       include: {
         role: true,
         site: true,
@@ -65,15 +64,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     }
 
     return {
-      userId: user.id,
+      id: user.id,
       username: user.username,
       fullName: user.fullName,
-
       roleId: user.roleId,
       role: user.role.name,
-
       siteId: user.siteId,
-
       sessionId: payload.sessionId,
     };
   }
