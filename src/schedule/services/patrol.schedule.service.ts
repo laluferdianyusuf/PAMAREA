@@ -29,8 +29,7 @@ export class PatrolScheduleService {
 
   async create(dto: CreatePatrolScheduleDto, createdById: string) {
     this.validateTimeRange(dto.startTime, dto.endTime);
-    this.validateDates(dto.dates);
-    this.validateAssignments(dto);
+
 
     const pointIds = dto.points.map((point) => point.patrolPointId);
 
@@ -48,6 +47,51 @@ export class PatrolScheduleService {
       throw new ConflictException('User assignment tidak boleh duplikat');
     }
 
+     if (dto.dates && dto.dates.length > 0) {
+      this.validateDates(dto.dates);
+    }
+    
+    if (dto.assignments && dto.assignments.length > 0) {
+      this.validateAssignments(dto);
+      
+      const userIds = dto.assignments.map((a) => a.userId);
+      const uniqueUserIds = [...new Set(userIds)];
+      if (uniqueUserIds.length !== userIds.length) {
+        throw new ConflictException('User assignment tidak boleh duplikat');
+      }
+
+     const users = await tx.user.findMany({
+        where: {
+          id: {
+            in: uniqueUserIds,
+          },
+          status: UserStatus.ACTIVE,
+          role: {
+            name: RoleName.SECURITY,
+          },
+        },
+        select: {
+          id: true,
+          fullName: true,
+          role: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (users.length !== uniqueUserIds.length) {
+        const foundIds = new Set(users.map((user) => user.id));
+
+        const invalidUsers = uniqueUserIds.filter((id) => !foundIds.has(id));
+
+        throw new BadRequestException({
+          message: 'Beberapa user assignment tidak valid',
+          invalidUserIds: invalidUsers,
+        });
+      }
+    }
     return this.prisma.$transaction(async (tx) => {
       const site = await tx.site.findFirst({
         where: {
@@ -87,37 +131,8 @@ export class PatrolScheduleService {
         });
       }
 
-      const users = await tx.user.findMany({
-        where: {
-          id: {
-            in: uniqueUserIds,
-          },
-          status: UserStatus.ACTIVE,
-          role: {
-            name: RoleName.SECURITY,
-          },
-        },
-        select: {
-          id: true,
-          fullName: true,
-          role: {
-            select: {
-              name: true,
-            },
-          },
-        },
-      });
-
-      if (users.length !== uniqueUserIds.length) {
-        const foundIds = new Set(users.map((user) => user.id));
-
-        const invalidUsers = uniqueUserIds.filter((id) => !foundIds.has(id));
-
-        throw new BadRequestException({
-          message: 'Beberapa user assignment tidak valid',
-          invalidUserIds: invalidUsers,
-        });
-      }
+      
+    
 
       const schedule = await tx.patrolSchedule.create({
         data: {
