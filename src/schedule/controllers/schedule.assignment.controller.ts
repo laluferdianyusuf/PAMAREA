@@ -34,6 +34,26 @@ export class PatrolScheduleAssignmentController {
     return this.service.create(scheduleId, dto, user.id);
   }
 
+  @Post('assignments/bulk')
+  async bulkAssignSatpam(
+    @Body() dto: BulkAssignUserDto,
+    @CurrentUser() user: any // Ambil ID admin yang sedang login
+  ) {
+    const result = await this.service.bulkAssignUser(dto, user.id);
+    
+    // Opsional: Langsung panggil generate() jika shift-nya melibatkan tanggal hari ini
+    // Agar satpam langsung mendapat tugas di aplikasinya hari ini juga
+    // const hariIni = new Date().toISOString().split('T')[0];
+    // for (const assignment of result) {
+    //    await this.generationService.generate(assignment.scheduleId, { startDate: hariIni, endDate: hariIni });
+    // }
+
+    return {
+      message: 'Jadwal shift bergilir berhasil disimpan',
+      data: result
+    };
+  }
+
   @Get()
   @Roles(RoleName.ADMIN)
   findAll(
