@@ -95,6 +95,58 @@ export class PatrolScheduleAssignmentService {
     });
   }
 
+  // FITUR BARU: ROSTERING / ATUR SHIFT BERGILIR UNTUK 1 SATPAM
+  async bulkAssignUser(dto: BulkAssignUserDto, createdById: string) {
+    // 1. Validasi User
+    const user = await this.prisma.user.findFirst({
+      where: { id: dto.userId, status: 'ACTIVE', role: { name: 'SECURITY' } },
+    });
+    
+    if (!user) {
+      throw new BadRequestException('User tidak valid atau bukan security');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const createdAssignments = [];
+
+      // 2. Looping data jadwal yang dikirim admin
+      for (const assign of dto.assignments) {
+        
+        // Cek apakah schedule-nya valid
+        const schedule = await tx.patrolSchedule.findUnique({
+          where: { id: assign.scheduleId }
+        });
+
+        if (!schedule) {
+          throw new NotFoundException(`Schedule dengan ID ${assign.scheduleId} tidak ditemukan`);
+        }
+
+        const parsedStart = this.parseDateOnly(assign.startDate);
+        const parsedEnd = assign.endDate ? this.parseDateOnly(assign.endDate) : null;
+
+        if (parsedEnd && parsedEnd < parsedStart) {
+          throw new BadRequestException(`endDate tidak boleh lebih kecil dari startDate pada schedule ${schedule.name}`);
+        }
+
+        // 3. Insert ke database
+        const newAssignment = await tx.patrolScheduleAssignment.create({
+          data: {
+            scheduleId: assign.scheduleId,
+            userId: dto.userId,
+            startDate: parsedStart,
+            endDate: parsedEnd,
+            status: ScheduleAssignmentStatus.ACTIVE,
+            createdById,
+          }
+        });
+
+        createdAssignments.push(newAssignment);
+      }
+
+      return createdAssignments;
+    });
+  }
+
   async findAll(scheduleId: string) {
     return this.prisma.patrolScheduleAssignment.findMany({
       where: {
