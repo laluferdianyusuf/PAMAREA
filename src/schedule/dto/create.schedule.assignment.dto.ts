@@ -12,3 +12,28 @@ export class CreateScheduleAssignmentDto {
   @IsDateString()
   endDate?: string;
 }
+
+export class AssignmentItemDto {
+  @IsUUID()
+  @IsNotEmpty()
+  scheduleId: string;
+
+  @IsDateString()
+  @IsNotEmpty()
+  startDate: string;
+
+  @IsDateString()
+  @IsOptional()
+  endDate?: string;
+}
+
+export class BulkAssignUserDto {
+  @IsUUID()
+  @IsNotEmpty()
+  userId: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AssignmentItemDto)
+  assignments: AssignmentItemDto[];
+}
