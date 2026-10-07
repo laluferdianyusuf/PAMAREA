@@ -377,17 +377,127 @@ export class PatrolScheduleService {
     };
   }
 
+  // FITUR BARU: EXTEND DATES (PERPANJANG JADWAL BULAN DEPAN)
+  async extendDates(scheduleId: string, newDates: string[], createdById: string) {
+    const schedule = await this.prisma.patrolSchedule.findUnique({ where: { id: scheduleId } });
+    if (!schedule) throw new NotFoundException('Patrol schedule not found');
+
+    this.validateDates(newDates);
+
+    await this.prisma.patrolScheduleDate.createMany({
+      data: newDates.map((date) => ({
+        scheduleId: schedule.id,
+        date: this.parseDateOnly(date),
+        status: ScheduleDateStatus.SCHEDULED,
+        createdById,
+      })),
+      skipDuplicates: true, 
+    });
+
+    return { message: 'Berhasil memperpanjang tanggal schedule' };
+  }
+
+  // FITUR BARU: TAMBAH SATPAM KE JADWAL YANG SEDANG BERJALAN
+  async addAssignment(scheduleId: string, userId: string, startDate: string, endDate: string | null, createdById: string) {
+    const schedule = await this.prisma.patrolSchedule.findUnique({ where: { id: scheduleId } });
+    if (!schedule) throw new NotFoundException('Patrol schedule not found');
+
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, status: 'ACTIVE', role: { name: 'SECURITY' } },
+    });
+    if (!user) throw new BadRequestException('User tidak valid atau bukan security');
+
+    const parsedStart = this.parseDateOnly(startDate);
+    const parsedEnd = endDate ? this.parseDateOnly(endDate) : null;
+    
+    if (parsedEnd && parsedEnd < parsedStart) {
+      throw new BadRequestException('endDate tidak boleh lebih kecil dari startDate');
+    }
+
+    return this.prisma.patrolScheduleAssignment.create({
+      data: {
+        scheduleId,
+        userId,
+        startDate: parsedStart,
+        endDate: parsedEnd,
+        status: ScheduleAssignmentStatus.ACTIVE,
+        createdById,
+      },
+    });
+  }
+
+  // FITUR BARU: UBAH/NONAKTIFKAN TUGAS SATPAM (Misal: Resign/Cuti/Diganti)
+  async updateAssignment(assignmentId: string, endDate?: string | null, status?: ScheduleAssignmentStatus) {
+    const assignment = await this.prisma.patrolScheduleAssignment.findUnique({ where: { id: assignmentId } });
+    if (!assignment) throw new NotFoundException('Assignment tidak ditemukan');
+
+    const parsedEnd = endDate ? this.parseDateOnly(endDate) : null;
+    if (parsedEnd && parsedEnd < assignment.startDate) {
+      throw new BadRequestException('endDate tidak boleh lebih kecil dari startDate');
+    }
+
+    return this.prisma.patrolScheduleAssignment.update({
+      where: { id: assignmentId },
+      data: {
+        ...(endDate !== undefined && { endDate: parsedEnd }),
+        ...(status !== undefined && { status }),
+      },
+    });
+  }
+
+  // FITUR BARU: TAMBAH AREA/TITIK BARU KE JADWAL (Menyisipkan Checkpoint)
+  async addPoint(scheduleId: string, patrolPointId: string, insertAtSequence: number, required = true) {
+    return this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.patrolSchedule.findUnique({
+        where: { id: scheduleId },
+        include: { points: true },
+      });
+      if (!schedule) throw new NotFoundException('Schedule tidak ditemukan');
+
+      const point = await tx.patrolPoint.findFirst({
+        where: { id: patrolPointId, siteId: schedule.siteId, status: 'ACTIVE' },
+      });
+      if (!point) throw new BadRequestException('Patrol point tidak valid atau berbeda Site');
+
+      const alreadyExists = schedule.points.some((p) => p.patrolPointId === patrolPointId);
+      if (alreadyExists) throw new ConflictException('Point sudah ada di schedule ini');
+
+      // Geser (increment) urutan titik yang sudah ada jika area disisipkan di tengah-tengah
+      await tx.patrolSchedulePoint.updateMany({
+        where: {
+          scheduleId: scheduleId,
+          sequence: { gte: insertAtSequence }, // Jika insert di urutan 2, maka 2 lama jadi 3, 3 jadi 4
+        },
+        data: {
+          sequence: { increment: 1 },
+        },
+      });
+
+      // Tambahkan titik baru
+      return tx.patrolSchedulePoint.create({
+        data: {
+          scheduleId,
+          patrolPointId,
+          sequence: insertAtSequence,
+          required,
+        },
+      });
+    });
+  }
+
+
+  // PERBAIKAN BUG: VALIDASI JAM LINTAS HARI (OVERNIGHT SHIFT)
   private validateTimeRange(startTime: string, endTime: string) {
     const start = this.timeToMinutes(startTime);
     const end = this.timeToMinutes(endTime);
 
-    if (start >= end) {
-      throw new BadRequestException('End time must be greater than start time');
+    if (start === end) {
+      throw new BadRequestException('Jam mulai dan jam selesai tidak boleh sama');
     }
   }
+
   private validateDates(dates: string[]) {
     const uniqueDates = new Set(dates);
-
     if (uniqueDates.size !== dates.length) {
       throw new ConflictException('Tanggal schedule tidak boleh duplikat');
     }
@@ -405,7 +515,6 @@ export class PatrolScheduleService {
 
   private timeToMinutes(time: string): number {
     const [hours, minutes] = time.split(':').map(Number);
-
     return hours * 60 + minutes;
   }
 
