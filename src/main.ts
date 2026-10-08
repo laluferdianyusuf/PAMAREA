@@ -1,9 +1,16 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import { cert, initializeApp } from 'firebase-admin/app';
 import { AppModule } from './app.module.js';
 
 async function bootstrap() {
+  const serviceAccount = require('../firebase-key.json');
+
+  initializeApp({
+    credential: cert(serviceAccount),
+  });
+
   const app = await NestFactory.create(AppModule);
 
   const config = app.get(ConfigService);

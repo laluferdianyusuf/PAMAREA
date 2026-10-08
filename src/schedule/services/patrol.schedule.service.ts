@@ -30,7 +30,6 @@ export class PatrolScheduleService {
   async create(dto: CreatePatrolScheduleDto, createdById: string) {
     this.validateTimeRange(dto.startTime, dto.endTime);
 
-
     const pointIds = dto.points.map((point) => point.patrolPointId);
 
     const uniquePointIds = [...new Set(pointIds)];
@@ -47,20 +46,20 @@ export class PatrolScheduleService {
       throw new ConflictException('User assignment tidak boleh duplikat');
     }
 
-     if (dto.dates && dto.dates.length > 0) {
+    if (dto.dates && dto.dates.length > 0) {
       this.validateDates(dto.dates);
     }
-    
+
     if (dto.assignments && dto.assignments.length > 0) {
       this.validateAssignments(dto);
-      
+
       const userIds = dto.assignments.map((a) => a.userId);
       const uniqueUserIds = [...new Set(userIds)];
       if (uniqueUserIds.length !== userIds.length) {
         throw new ConflictException('User assignment tidak boleh duplikat');
       }
 
-     const users = await tx.user.findMany({
+      const users = await this.prisma.user.findMany({
         where: {
           id: {
             in: uniqueUserIds,
@@ -130,9 +129,6 @@ export class PatrolScheduleService {
           invalidPointIds: invalidPoints,
         });
       }
-
-      
-    
 
       const schedule = await tx.patrolSchedule.create({
         data: {
@@ -286,6 +282,84 @@ export class PatrolScheduleService {
     };
   }
 
+  // FITUR BARU: AMBIL DATA ROSTER BULANAN UNTUK DASHBOARD ADMIN
+  async getMonthlyRoster(siteId: string, month: number, year: number) {
+    // 1. Tentukan tanggal awal dan akhir bulan yang diminta
+    // Contoh jika month = 10 (Oktober), year = 2026
+    const startDate = new Date(Date.UTC(year, month - 1, 1));
+    const endDate = new Date(Date.UTC(year, month, 0)); // Hari terakhir di bulan itu
+
+    // 2. Ambil semua penugasan (assignments) yang berjalan pada rentang bulan tersebut
+    const assignments = await this.prisma.patrolScheduleAssignment.findMany({
+      where: {
+        schedule: {
+          siteId: siteId,
+        },
+        status: 'ACTIVE',
+        // Logika overlap: Mulainya sebelum akhir bulan, dan Selesainya setelah awal bulan
+        startDate: { lte: endDate },
+        OR: [{ endDate: null }, { endDate: { gte: startDate } }],
+      },
+      include: {
+        user: {
+          select: { id: true, fullName: true, employeeNumber: true },
+        },
+        schedule: {
+          select: { id: true, name: true },
+          // include: { dates: { where: { date: { gte: startDate, lte: endDate } } } }
+        },
+      },
+      orderBy: {
+        user: { fullName: 'asc' },
+      },
+    });
+
+    // 3. Transformasi data menjadi bentuk Matrix (Baris: User, Kolom: Tanggal)
+    const rosterMap = new Map<string, any>();
+
+    for (const assign of assignments) {
+      const userId = assign.user.id;
+
+      // Buat struktur dasar jika user belum ada di Map
+      if (!rosterMap.has(userId)) {
+        rosterMap.set(userId, {
+          userId: userId,
+          employeeNumber: assign.user.employeeNumber,
+          fullName: assign.user.fullName,
+          shifts: {},
+        });
+      }
+
+      const userData = rosterMap.get(userId);
+
+      // Tentukan rentang tanggal aktual satpam ini di bulan tersebut
+      // (Bisa jadi dia cuma di-assign tgl 1 - 15, sisanya pindah shift)
+      const assignStart =
+        assign.startDate > startDate ? assign.startDate : startDate;
+      const assignEnd =
+        assign.endDate && assign.endDate < endDate ? assign.endDate : endDate;
+
+      // Looping hari per hari untuk mengisi kolom 'shifts'
+      let cursor = new Date(assignStart);
+      while (cursor <= assignEnd) {
+        const dateString = cursor.toISOString().split('T')[0]; // Format: '2026-10-01'
+
+        // Ambil huruf depan dari nama shift (Misal: "Shift Pagi" -> "P")
+        // Atau Anda bisa kembalikan nama full "Shift Pagi" sesuai kebutuhan UI
+        const shiftInitial = assign.schedule.name.charAt(0).toUpperCase();
+        // Alternatif: const shiftName = assign.schedule.name;
+
+        // Masukkan ke dictionary shifts
+        userData.shifts[dateString] = shiftInitial;
+
+        // Lanjut ke hari berikutnya
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    }
+
+    return Array.from(rosterMap.values());
+  }
+
   async update(id: string, dto: UpdatePatrolScheduleDto) {
     const schedule = await this.repository.findBasicById(id);
 
@@ -393,8 +467,14 @@ export class PatrolScheduleService {
   }
 
   // FITUR BARU: EXTEND DATES (PERPANJANG JADWAL BULAN DEPAN)
-  async extendDates(scheduleId: string, newDates: string[], createdById: string) {
-    const schedule = await this.prisma.patrolSchedule.findUnique({ where: { id: scheduleId } });
+  async extendDates(
+    scheduleId: string,
+    newDates: string[],
+    createdById: string,
+  ) {
+    const schedule = await this.prisma.patrolSchedule.findUnique({
+      where: { id: scheduleId },
+    });
     if (!schedule) throw new NotFoundException('Patrol schedule not found');
 
     this.validateDates(newDates);
@@ -406,27 +486,38 @@ export class PatrolScheduleService {
         status: ScheduleDateStatus.SCHEDULED,
         createdById,
       })),
-      skipDuplicates: true, 
+      skipDuplicates: true,
     });
 
     return { message: 'Berhasil memperpanjang tanggal schedule' };
   }
 
   // FITUR BARU: TAMBAH SATPAM KE JADWAL YANG SEDANG BERJALAN
-  async addAssignment(scheduleId: string, userId: string, startDate: string, endDate: string | null, createdById: string) {
-    const schedule = await this.prisma.patrolSchedule.findUnique({ where: { id: scheduleId } });
+  async addAssignment(
+    scheduleId: string,
+    userId: string,
+    startDate: string,
+    endDate: string | null,
+    createdById: string,
+  ) {
+    const schedule = await this.prisma.patrolSchedule.findUnique({
+      where: { id: scheduleId },
+    });
     if (!schedule) throw new NotFoundException('Patrol schedule not found');
 
     const user = await this.prisma.user.findFirst({
       where: { id: userId, status: 'ACTIVE', role: { name: 'SECURITY' } },
     });
-    if (!user) throw new BadRequestException('User tidak valid atau bukan security');
+    if (!user)
+      throw new BadRequestException('User tidak valid atau bukan security');
 
     const parsedStart = this.parseDateOnly(startDate);
     const parsedEnd = endDate ? this.parseDateOnly(endDate) : null;
-    
+
     if (parsedEnd && parsedEnd < parsedStart) {
-      throw new BadRequestException('endDate tidak boleh lebih kecil dari startDate');
+      throw new BadRequestException(
+        'endDate tidak boleh lebih kecil dari startDate',
+      );
     }
 
     return this.prisma.patrolScheduleAssignment.create({
@@ -442,13 +533,21 @@ export class PatrolScheduleService {
   }
 
   // FITUR BARU: UBAH/NONAKTIFKAN TUGAS SATPAM (Misal: Resign/Cuti/Diganti)
-  async updateAssignment(assignmentId: string, endDate?: string | null, status?: ScheduleAssignmentStatus) {
-    const assignment = await this.prisma.patrolScheduleAssignment.findUnique({ where: { id: assignmentId } });
+  async updateAssignment(
+    assignmentId: string,
+    endDate?: string | null,
+    status?: ScheduleAssignmentStatus,
+  ) {
+    const assignment = await this.prisma.patrolScheduleAssignment.findUnique({
+      where: { id: assignmentId },
+    });
     if (!assignment) throw new NotFoundException('Assignment tidak ditemukan');
 
     const parsedEnd = endDate ? this.parseDateOnly(endDate) : null;
     if (parsedEnd && parsedEnd < assignment.startDate) {
-      throw new BadRequestException('endDate tidak boleh lebih kecil dari startDate');
+      throw new BadRequestException(
+        'endDate tidak boleh lebih kecil dari startDate',
+      );
     }
 
     return this.prisma.patrolScheduleAssignment.update({
@@ -461,7 +560,12 @@ export class PatrolScheduleService {
   }
 
   // FITUR BARU: TAMBAH AREA/TITIK BARU KE JADWAL (Menyisipkan Checkpoint)
-  async addPoint(scheduleId: string, patrolPointId: string, insertAtSequence: number, required = true) {
+  async addPoint(
+    scheduleId: string,
+    patrolPointId: string,
+    insertAtSequence: number,
+    required = true,
+  ) {
     return this.prisma.$transaction(async (tx) => {
       const schedule = await tx.patrolSchedule.findUnique({
         where: { id: scheduleId },
@@ -472,10 +576,16 @@ export class PatrolScheduleService {
       const point = await tx.patrolPoint.findFirst({
         where: { id: patrolPointId, siteId: schedule.siteId, status: 'ACTIVE' },
       });
-      if (!point) throw new BadRequestException('Patrol point tidak valid atau berbeda Site');
+      if (!point)
+        throw new BadRequestException(
+          'Patrol point tidak valid atau berbeda Site',
+        );
 
-      const alreadyExists = schedule.points.some((p) => p.patrolPointId === patrolPointId);
-      if (alreadyExists) throw new ConflictException('Point sudah ada di schedule ini');
+      const alreadyExists = schedule.points.some(
+        (p) => p.patrolPointId === patrolPointId,
+      );
+      if (alreadyExists)
+        throw new ConflictException('Point sudah ada di schedule ini');
 
       // Geser (increment) urutan titik yang sudah ada jika area disisipkan di tengah-tengah
       await tx.patrolSchedulePoint.updateMany({
@@ -500,14 +610,15 @@ export class PatrolScheduleService {
     });
   }
 
-
   // PERBAIKAN BUG: VALIDASI JAM LINTAS HARI (OVERNIGHT SHIFT)
   private validateTimeRange(startTime: string, endTime: string) {
     const start = this.timeToMinutes(startTime);
     const end = this.timeToMinutes(endTime);
 
     if (start === end) {
-      throw new BadRequestException('Jam mulai dan jam selesai tidak boleh sama');
+      throw new BadRequestException(
+        'Jam mulai dan jam selesai tidak boleh sama',
+      );
     }
   }
 

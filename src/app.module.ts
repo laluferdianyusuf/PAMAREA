@@ -5,6 +5,7 @@ import { AppService } from './app.service.js';
 import { PatrolAssignmentModule } from './assignments/assignments.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { EmergencyModule } from './emergency/emergency.module.js';
 import { FindingsModule } from './findings/findings.module.js';
 import { NfcModule } from './nfc/nfc.module.js';
 import { PatrolPointNfcModule } from './patrol-point-nfc/patrol-point-nfc.module.js';
@@ -16,6 +17,7 @@ import { RolesModule } from './roles/roles.module.js';
 import { PatrolScheduleModule } from './schedule/patrol.schedule.module.js';
 import { SitesModule } from './sites/sites.module.js';
 import { StorageModule } from './storage/storage.module.js';
+import { DeviceModule } from './user-device/user.device.module.js';
 import { UsersModule } from './users/users.module.js';
 
 @Module({
@@ -51,6 +53,10 @@ import { UsersModule } from './users/users.module.js';
     QuestionsModule,
 
     PatrolsModule,
+
+    EmergencyModule,
+
+    DeviceModule,
   ],
   controllers: [AppController],
   providers: [AppService],
