@@ -6,6 +6,7 @@ import { PatrolScheduleDateController } from './controllers/patrol.schedule.date
 import { PatrolScheduleGenerationController } from './controllers/patrol.schedule.generation.controller.js';
 import { PatrolSchedulePointController } from './controllers/patrol.schedule.point.controller.js';
 import { PatrolScheduleAssignmentController } from './controllers/schedule.assignment.controller.js';
+import { ScheduleCronService } from './cron/schedule.cron.service.js';
 import { PatrolSchedulePolicy } from './policies/patrol.schedule.policy.service.js';
 import { PatrolScheduleRepository } from './repositories/patrol-schedule.repository.js';
 import { PatrolCheckpointService } from './services/patrol.checkpoint.service.js';
@@ -39,6 +40,7 @@ import { ScheduleGenerationService } from './services/schedule.generation.servic
     ScheduleGenerationService,
     PatrolRoundService,
     PatrolCheckpointService,
+    ScheduleCronService,
   ],
 
   exports: [
