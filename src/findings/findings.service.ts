@@ -351,34 +351,34 @@ export class FindingsService {
   }
 
   private readonly detailInclude = {
-    reporter: {
+    reportedBy: {
       select: {
         id: true,
         username: true,
         fullName: true,
       },
     },
-    assignee: {
+    assignedTo: {
       select: {
         id: true,
         username: true,
         fullName: true,
       },
     },
-    resolver: {
+    resolvedBy: {
       select: {
         id: true,
         username: true,
         fullName: true,
       },
     },
-    closer: {
-      select: {
-        id: true,
-        username: true,
-        fullName: true,
-      },
-    },
+    // user: {
+    //   select: {
+    //     id: true,
+    //     username: true,
+    //     fullName: true,
+    //   },
+    // },
     patrolPoint: {
       select: {
         id: true,
