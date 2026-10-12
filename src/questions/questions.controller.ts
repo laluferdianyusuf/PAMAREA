@@ -41,10 +41,13 @@ export class QuestionsController {
   }
 
   @Get('active')
-  findActive() {
-    return this.service.findActive();
-  }
+  findActive(@Query('patrolPointId') patrolPointId?: string) {
+    if (!patrolPointId) {
+      return this.service.findActive();
+    }
 
+    return this.service.findActiveByPoint(patrolPointId);
+  }
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);

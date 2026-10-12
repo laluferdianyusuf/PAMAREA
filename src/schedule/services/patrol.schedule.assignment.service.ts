@@ -4,8 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ScheduleAssignmentStatus } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
-import { CreateScheduleAssignmentDto } from '../dto/create.schedule.assignment.dto.js';
+import {
+  BulkAssignUserDto,
+  CreateScheduleAssignmentDto,
+} from '../dto/create.schedule.assignment.dto.js';
 import { PatrolSchedulePolicy } from '../policies/patrol.schedule.policy.service.js';
 
 @Injectable()
@@ -28,7 +32,7 @@ export class PatrolScheduleAssignmentService {
       throw new NotFoundException('Schedule not found');
     }
 
-    this.policy.assertDraft(schedule.status);
+    this.policy.assertEditable(schedule.status);
 
     const user = await this.prisma.user.findUnique({
       where: {
@@ -101,7 +105,7 @@ export class PatrolScheduleAssignmentService {
     const user = await this.prisma.user.findFirst({
       where: { id: dto.userId, status: 'ACTIVE', role: { name: 'SECURITY' } },
     });
-    
+
     if (!user) {
       throw new BadRequestException('User tidak valid atau bukan security');
     }
@@ -111,21 +115,26 @@ export class PatrolScheduleAssignmentService {
 
       // 2. Looping data jadwal yang dikirim admin
       for (const assign of dto.assignments) {
-        
         // Cek apakah schedule-nya valid
         const schedule = await tx.patrolSchedule.findUnique({
-          where: { id: assign.scheduleId }
+          where: { id: assign.scheduleId },
         });
 
         if (!schedule) {
-          throw new NotFoundException(`Schedule dengan ID ${assign.scheduleId} tidak ditemukan`);
+          throw new NotFoundException(
+            `Schedule dengan ID ${assign.scheduleId} tidak ditemukan`,
+          );
         }
 
-        const parsedStart = this.parseDateOnly(assign.startDate);
-        const parsedEnd = assign.endDate ? this.parseDateOnly(assign.endDate) : null;
+        const parsedStart = this.parseDate(assign.startDate);
+        const parsedEnd = assign.endDate
+          ? this.parseDate(assign.endDate)
+          : null;
 
         if (parsedEnd && parsedEnd < parsedStart) {
-          throw new BadRequestException(`endDate tidak boleh lebih kecil dari startDate pada schedule ${schedule.name}`);
+          throw new BadRequestException(
+            `endDate tidak boleh lebih kecil dari startDate pada schedule ${schedule.name}`,
+          );
         }
 
         // 3. Insert ke database
@@ -137,7 +146,7 @@ export class PatrolScheduleAssignmentService {
             endDate: parsedEnd,
             status: ScheduleAssignmentStatus.ACTIVE,
             createdById,
-          }
+          },
         });
 
         createdAssignments.push(newAssignment);

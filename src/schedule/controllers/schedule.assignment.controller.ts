@@ -13,7 +13,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import type { User } from '../../generated/prisma/client.js';
 import { RoleName } from '../../generated/prisma/enums.js';
-import { CreateScheduleAssignmentDto } from '../dto/create.schedule.assignment.dto.js';
+import {
+  BulkAssignUserDto,
+  CreateScheduleAssignmentDto,
+} from '../dto/create.schedule.assignment.dto.js';
 import { PatrolScheduleAssignmentService } from '../services/patrol.schedule.assignment.service.js';
 
 @Controller('patrol-schedules/:scheduleId/assignments')
@@ -21,7 +24,7 @@ import { PatrolScheduleAssignmentService } from '../services/patrol.schedule.ass
 export class PatrolScheduleAssignmentController {
   constructor(private readonly service: PatrolScheduleAssignmentService) {}
 
-  @Post()
+  @Post('assign')
   @Roles(RoleName.ADMIN)
   create(
     @Param('scheduleId')
@@ -37,10 +40,10 @@ export class PatrolScheduleAssignmentController {
   @Post('assignments/bulk')
   async bulkAssignSatpam(
     @Body() dto: BulkAssignUserDto,
-    @CurrentUser() user: any // Ambil ID admin yang sedang login
+    @CurrentUser() user: any, // Ambil ID admin yang sedang login
   ) {
     const result = await this.service.bulkAssignUser(dto, user.id);
-    
+
     // Opsional: Langsung panggil generate() jika shift-nya melibatkan tanggal hari ini
     // Agar satpam langsung mendapat tugas di aplikasinya hari ini juga
     // const hariIni = new Date().toISOString().split('T')[0];
@@ -50,7 +53,7 @@ export class PatrolScheduleAssignmentController {
 
     return {
       message: 'Jadwal shift bergilir berhasil disimpan',
-      data: result
+      data: result,
     };
   }
 

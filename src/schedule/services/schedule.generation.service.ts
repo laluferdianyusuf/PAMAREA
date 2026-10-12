@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ScheduleTimeUtil } from '../../common/utils/schedule-time.util.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { GenerateScheduleDto } from '../dto/generate.schedule.dto.js';
 
@@ -125,6 +126,20 @@ export class ScheduleGenerationService {
       schedule.intervalMinutes,
     );
 
+    console.dir(
+      {
+        schedule: schedule.name,
+        timezone: 'Asia/Makassar',
+        date: ScheduleTimeUtil.formatDate(date),
+        rounds: rounds.map((round) => ({
+          roundNumber: round.roundNumber,
+          start: ScheduleTimeUtil.formatTimestamp(round.scheduledStartAt),
+          end: ScheduleTimeUtil.formatTimestamp(round.scheduledEndAt),
+        })),
+      },
+      { depth: null },
+    );
+
     for (const assignment of activeAssignments) {
       for (const round of rounds) {
         const existingRound = await this.prisma.patrolRound.findUnique({
@@ -215,14 +230,32 @@ export class ScheduleGenerationService {
     endTime: string,
     intervalMinutes: number,
   ) {
-    const start = this.combineDateTime(date, startTime);
+    if (!Number.isInteger(intervalMinutes) || intervalMinutes <= 0) {
+      throw new BadRequestException(
+        'intervalMinutes harus berupa bilangan bulat positif.',
+      );
+    }
 
-    const end = this.combineDateTime(date, endTime);
+    const startNormalized = ScheduleTimeUtil.normalizeTime(startTime);
+    const endNormalized = ScheduleTimeUtil.normalizeTime(endTime);
 
-    const result = [];
+    const [startHour, startMinute] = startNormalized.split(':').map(Number);
+    const [endHour, endMinute] = endNormalized.split(':').map(Number);
+
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+    const endDayOffset = endMinutes <= startMinutes ? 1 : 0;
+
+    const start = this.combineDateTime(date, startNormalized);
+    const end = this.combineDateTime(date, endNormalized, endDayOffset);
+
+    const result: {
+      roundNumber: number;
+      scheduledStartAt: Date;
+      scheduledEndAt: Date;
+    }[] = [];
 
     let cursor = new Date(start);
-
     let roundNumber = 1;
 
     while (cursor < end) {
@@ -243,22 +276,20 @@ export class ScheduleGenerationService {
     return result;
   }
 
+  private parseDate(value: string): Date {
+    return ScheduleTimeUtil.parseDate(value);
+  }
+
+  private combineDateTime(date: Date, time: string, dayOffset = 0): Date {
+    return ScheduleTimeUtil.combineDateTime(date, time, dayOffset);
+  }
+
   private isAssignmentActive(assignment: any, date: Date) {
     const start = new Date(assignment.startDate);
 
     const end = assignment.endDate ? new Date(assignment.endDate) : null;
 
     return date >= start && (!end || date <= end);
-  }
-
-  private combineDateTime(date: Date, time: string) {
-    const [hour, minute] = time.split(':').map(Number);
-
-    const result = new Date(date);
-
-    result.setUTCHours(hour, minute, 0, 0);
-
-    return result;
   }
 
   private getDates(start: Date, end: Date) {
@@ -273,9 +304,5 @@ export class ScheduleGenerationService {
     }
 
     return dates;
-  }
-
-  private parseDate(value: string) {
-    return new Date(`${value}T00:00:00.000Z`);
   }
 }

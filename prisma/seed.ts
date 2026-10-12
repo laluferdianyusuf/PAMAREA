@@ -1,7 +1,6 @@
 import * as bcrypt from 'bcrypt';
 
 import {
-  AssignmentStatus,
   NfcAssignmentStatus,
   NfcStatus,
   PatrolPointStatus,
@@ -55,7 +54,7 @@ async function main() {
 
       // Contoh koordinat development.
       // Nanti diganti koordinat lokasi sebenarnya.
-      latitude: -6.917464,
+      latitude: -8.613164654410363,
       longitude: 107.619123,
 
       status: SiteStatus.ACTIVE,
@@ -167,10 +166,10 @@ async function main() {
       name: 'Pintu Utama',
       description: 'Pintu masuk utama gedung',
 
-      latitude: -6.917464,
-      longitude: 107.619123,
+      latitude: -8.613164654410363,
+      longitude: 116.115630323912,
 
-      radiusMeters: 50,
+      radiusMeters: 30,
 
       status: PatrolPointStatus.ACTIVE,
       createdById: admin.id,
@@ -191,10 +190,10 @@ async function main() {
       name: 'Area Parkir',
       description: 'Area parkir kendaraan',
 
-      latitude: -6.9177,
-      longitude: 107.6193,
+      latitude: -8.613164654410363,
+      longitude: 116.115630323912,
 
-      radiusMeters: 50,
+      radiusMeters: 30,
 
       status: PatrolPointStatus.ACTIVE,
       createdById: admin.id,
@@ -215,10 +214,10 @@ async function main() {
       name: 'Lobby',
       description: 'Area lobby utama',
 
-      latitude: -6.91755,
-      longitude: 107.61895,
+      latitude: -8.613164654410363,
+      longitude: 116.115630323912,
 
-      radiusMeters: 40,
+      radiusMeters: 30,
 
       status: PatrolPointStatus.ACTIVE,
       createdById: admin.id,
@@ -239,10 +238,10 @@ async function main() {
       name: 'Lantai 2',
       description: 'Koridor lantai 2',
 
-      latitude: -6.91735,
-      longitude: 107.619,
+      latitude: -8.613164654410363,
+      longitude: 116.115630323912,
 
-      radiusMeters: 40,
+      radiusMeters: 30,
 
       status: PatrolPointStatus.ACTIVE,
       createdById: admin.id,
@@ -263,10 +262,10 @@ async function main() {
       name: 'Area Belakang',
       description: 'Area belakang gedung',
 
-      latitude: -6.9178,
-      longitude: 107.6188,
+      latitude: -8.613164654410363,
+      longitude: 116.115630323912,
 
-      radiusMeters: 50,
+      radiusMeters: 30,
 
       status: PatrolPointStatus.ACTIVE,
       createdById: admin.id,
@@ -408,65 +407,6 @@ async function main() {
     today.getMonth(),
     today.getDate() + 30,
   );
-
-  await prisma.patrolAssignment.createMany({
-    data: [
-      {
-        userId: satpam1.id,
-        patrolPointId: point1.id,
-
-        startDate,
-        endDate,
-
-        status: AssignmentStatus.ACTIVE,
-        createdById: admin.id,
-      },
-      {
-        userId: satpam1.id,
-        patrolPointId: point2.id,
-
-        startDate,
-        endDate,
-
-        status: AssignmentStatus.ACTIVE,
-        createdById: admin.id,
-      },
-      {
-        userId: satpam1.id,
-        patrolPointId: point3.id,
-
-        startDate,
-        endDate,
-
-        status: AssignmentStatus.ACTIVE,
-        createdById: admin.id,
-      },
-
-      {
-        userId: satpam2.id,
-        patrolPointId: point4.id,
-
-        startDate,
-        endDate,
-
-        status: AssignmentStatus.ACTIVE,
-        createdById: admin.id,
-      },
-      {
-        userId: satpam2.id,
-        patrolPointId: point5.id,
-
-        startDate,
-        endDate,
-
-        status: AssignmentStatus.ACTIVE,
-        createdById: admin.id,
-      },
-    ],
-    skipDuplicates: true,
-  });
-
-  console.log('Patrol assignments created');
 
   const q1 = await prisma.question.create({
     data: {
@@ -697,27 +637,6 @@ async function main() {
   });
 
   console.log('Point questions created');
-
-  console.log('');
-  console.log('========================================');
-  console.log('DATABASE SEED COMPLETED');
-  console.log('========================================');
-  console.log('');
-  console.log('LOGIN ACCOUNTS');
-  console.log('');
-  console.log('ADMIN');
-  console.log('Username : admin');
-  console.log('Password : Admin123!');
-  console.log('');
-  console.log('SATPAM 1');
-  console.log('Username : satpam001');
-  console.log('Password : Satpam123!');
-  console.log('');
-  console.log('SATPAM 2');
-  console.log('Username : satpam002');
-  console.log('Password : Satpam123!');
-  console.log('');
-  console.log('========================================');
 }
 
 main()

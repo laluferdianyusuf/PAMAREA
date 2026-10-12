@@ -249,6 +249,201 @@ export class PatrolsService {
     return this.getPatrol(patrol.id, userId);
   }
 
+  async startNextPatrol(userId: string) {
+    const today = this.startOfToday();
+    const now = new Date();
+
+    const assignments = await this.prisma.patrolScheduleAssignment.findMany({
+      where: {
+        userId,
+        status: 'ACTIVE',
+        startDate: { lte: today },
+        OR: [{ endDate: null }, { endDate: { gte: today } }],
+      },
+      include: {
+        schedule: true,
+        rounds: {
+          where: {
+            scheduleDate: {
+              date: today,
+            },
+            status: {
+              in: ['PENDING', 'IN_PROGRESS'],
+            },
+            scheduledStartAt: { lte: now },
+          },
+          orderBy: {
+            scheduledStartAt: 'asc',
+          },
+          include: {
+            scheduleDate: true,
+            checkpoints: {
+              orderBy: {
+                sequence: 'asc',
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // console.dir(
+    //   {
+    //     today: today.toISOString(),
+    //     now: now.toISOString(),
+    //     assignments: assignments.map((assignment) => ({
+    //       assignmentId: assignment.id,
+    //       status: assignment.status,
+    //       startDate: assignment.startDate,
+    //       endDate: assignment.endDate,
+    //       schedule: {
+    //         id: assignment.schedule.id,
+    //         name: assignment.schedule.name,
+    //         startTime: assignment.schedule.startTime,
+    //         endTime: assignment.schedule.endTime,
+    //         intervalMinutes: assignment.schedule.intervalMinutes,
+    //         enforceSequence: assignment.schedule.enforceSequence,
+    //       },
+    //       rounds: assignment.rounds.map((round) => ({
+    //         id: round.id,
+    //         status: round.status,
+    //         scheduleDate: round.scheduleDate.date,
+    //         scheduledStartAt: round.scheduledStartAt.toISOString(),
+    //         scheduledEndAt: round.scheduledEndAt.toISOString(),
+    //         checkpoints: round.checkpoints.map((checkpoint) => ({
+    //           id: checkpoint.id,
+    //           sequence: checkpoint.sequence,
+    //           status: checkpoint.status,
+    //           required: checkpoint.required,
+    //         })),
+    //       })),
+    //     })),
+    //   },
+    //   { depth: null },
+    // );
+
+    const rounds = assignments
+      .flatMap((assignment) =>
+        assignment.rounds.map((round) => ({
+          assignment,
+          round,
+        })),
+      )
+      .sort((a, b) => {
+        const aActive = a.round.status === 'IN_PROGRESS' ? 0 : 1;
+        const bActive = b.round.status === 'IN_PROGRESS' ? 0 : 1;
+
+        return (
+          aActive - bActive ||
+          a.round.scheduledStartAt.getTime() -
+            b.round.scheduledStartAt.getTime()
+        );
+      });
+
+    const device = await this.prisma.userDevice.findFirst({
+      where: {
+        userId,
+        status: 'ACTIVE',
+      },
+    });
+
+    if (!device) {
+      throw new NotFoundException('Perangkat belum terdaftar untuk akun ini');
+    }
+
+    const deviceId = device.id;
+
+    for (const { assignment, round } of rounds) {
+      let checkpoint;
+
+      if (assignment.schedule.enforceSequence) {
+        const previous = await this.prisma.patrolCheckpoint.findFirst({
+          where: {
+            roundId: round.id,
+            required: true,
+            status: {
+              not: 'COMPLETED',
+            },
+          },
+          orderBy: {
+            sequence: 'asc',
+          },
+        });
+
+        if (!previous) {
+          continue;
+        }
+
+        if (
+          previous.status !== 'PENDING' &&
+          previous.status !== 'IN_PROGRESS'
+        ) {
+          continue;
+        }
+
+        checkpoint = previous;
+      } else {
+        checkpoint = round.checkpoints.find(
+          (item) => item.status === 'PENDING' || item.status === 'IN_PROGRESS',
+        );
+      }
+
+      if (!checkpoint) continue;
+
+      const existingPatrol = await this.prisma.patrol.findFirst({
+        where: {
+          checkpointId: checkpoint.id,
+          userId,
+          status: {
+            in: [
+              PatrolStatus.STARTED,
+              PatrolStatus.VALIDATED,
+              PatrolStatus.IN_PROGRESS,
+            ],
+          },
+        },
+        orderBy: {
+          startedAt: 'desc',
+        },
+      });
+
+      if (existingPatrol) {
+        return this.getPatrol(existingPatrol.id, userId);
+      }
+
+      return this.startPatrol(checkpoint.id, userId, {
+        deviceId: deviceId ?? '',
+      });
+    }
+
+    console.log('[NO AVAILABLE CHECKPOINT]', {
+      userId,
+      today: today.toISOString(),
+      now: now.toISOString(),
+      assignments: assignments.map((assignment) => ({
+        assignmentId: assignment.id,
+        scheduleName: assignment.schedule.name,
+        rounds: assignment.rounds.map((round) => ({
+          id: round.id,
+          status: round.status,
+          scheduledStartAt: round.scheduledStartAt,
+          scheduledEndAt: round.scheduledEndAt,
+          checkpoints: round.checkpoints.map((checkpoint) => ({
+            id: checkpoint.id,
+            status: checkpoint.status,
+            required: checkpoint.required,
+          })),
+        })),
+      })),
+    });
+
+    throw new UnprocessableEntityException({
+      code: 'NO_AVAILABLE_CHECKPOINT',
+      message:
+        'Tidak ada checkpoint yang dapat dimulai saat ini. Periksa jadwal, ronde, dan penugasan Anda.',
+    });
+  }
+
   async getPatrol(patrolId: string, userId: string) {
     const patrol = await this.prisma.patrol.findUnique({
       where: {
@@ -259,6 +454,11 @@ export class PatrolsService {
         patrolPoint: true,
         checkpoint: {
           include: {
+            patrolPoint: {
+              include: {
+                site: true,
+              },
+            },
             round: {
               include: {
                 scheduleDate: {
@@ -310,7 +510,10 @@ export class PatrolsService {
       });
     }
 
-    return patrol;
+    return {
+      ...patrol,
+      siteName: patrol.site.name,
+    };
   }
 
   async bypassNfc(patrolId: string, userId: string, dto: BypassNfcDto) {
@@ -397,95 +600,80 @@ export class PatrolsService {
     userId: string,
     dto: ValidateLocationDto,
   ) {
-    const patrol = await this.prisma.patrol.findUnique({
-      where: {
-        id: patrolId,
-      },
-      include: {
-        patrolPoint: true,
-      },
-    });
+    const startedAt = Date.now();
 
-    if (!patrol) {
-      throw new NotFoundException({
-        code: 'PATROL_NOT_FOUND',
-        message: 'Patrol tidak ditemukan',
+    try {
+      const patrol = await this.prisma.patrol.findUnique({
+        where: { id: patrolId },
+        include: { patrolPoint: true },
       });
-    }
 
-    if (patrol.userId !== userId) {
-      throw new UnprocessableEntityException({
-        code: 'PATROL_ACCESS_DENIED',
-        message: 'Anda tidak memiliki akses ke patrol ini',
-      });
-    }
+      if (!patrol) {
+        throw new NotFoundException({
+          code: 'PATROL_NOT_FOUND',
+          message: 'Patrol tidak ditemukan',
+        });
+      }
 
-    if (patrol.status === 'SUBMITTED') {
-      throw new UnprocessableEntityException({
-        code: 'PATROL_ALREADY_SUBMITTED',
-        message: 'Patrol sudah disubmit',
-      });
-    }
+      if (patrol.userId !== userId) {
+        throw new UnprocessableEntityException({
+          code: 'PATROL_ACCESS_DENIED',
+          message: 'Anda tidak memiliki akses ke patrol ini',
+        });
+      }
 
-    const point = patrol.patrolPoint;
+      if (patrol.status === 'SUBMITTED') {
+        throw new UnprocessableEntityException({
+          code: 'PATROL_ALREADY_SUBMITTED',
+          message: 'Patrol sudah disubmit',
+        });
+      }
 
-    const result = this.gpsValidationService.validate(
-      dto.latitude,
-      dto.longitude,
+      const point = patrol.patrolPoint;
 
-      Number(point.latitude),
-      Number(point.longitude),
+      const result = this.gpsValidationService.validate(
+        dto.latitude,
+        dto.longitude,
+        Number(point.latitude),
+        Number(point.longitude),
+        point.radiusMeters,
+        dto.accuracy,
+      );
 
-      point.radiusMeters,
-
-      dto.accuracy,
-    );
-
-    await this.prisma.patrol.update({
-      where: {
-        id: patrolId,
-      },
-
-      data: {
-        latitude: dto.latitude,
-
-        longitude: dto.longitude,
-
-        gpsAccuracy: dto.accuracy ?? null,
-
-        distanceFromPoint: result.distanceMeters,
-
-        gpsValidationStatus: result.valid
-          ? GpsValidationStatus.VALID
-          : GpsValidationStatus.INVALID,
-      },
-    });
-
-    if (!result.valid) {
-      throw new UnprocessableEntityException({
-        code: 'GPS_OUTSIDE_RADIUS',
-
-        message: 'Posisi Anda berada di luar radius patrol point',
-
-        details: {
-          distanceMeters: result.distanceMeters,
-
-          radiusMeters: result.radiusMeters,
-
-          accuracyMeters: result.accuracyMeters,
+      await this.prisma.patrol.update({
+        where: { id: patrolId },
+        data: {
+          latitude: dto.latitude,
+          longitude: dto.longitude,
+          gpsAccuracy: dto.accuracy ?? null,
+          distanceFromPoint: result.distanceMeters,
+          gpsValidationStatus: result.valid
+            ? GpsValidationStatus.VALID
+            : GpsValidationStatus.INVALID,
         },
       });
+
+      if (!result.valid) {
+        throw new UnprocessableEntityException({
+          code: 'GPS_OUTSIDE_RADIUS',
+          message: 'Posisi Anda berada di luar radius patrol point',
+          details: {
+            distanceMeters: result.distanceMeters,
+            radiusMeters: result.radiusMeters,
+            accuracyMeters: result.accuracyMeters,
+          },
+        });
+      }
+
+      return {
+        valid: true,
+        distanceMeters: result.distanceMeters,
+        radiusMeters: result.radiusMeters,
+        accuracyMeters: result.accuracyMeters,
+      };
+    } catch (error) {
+      throw error;
     }
-
-    return {
-      valid: true,
-
-      distanceMeters: result.distanceMeters,
-
-      radiusMeters: result.radiusMeters,
-
-      accuracyMeters: result.accuracyMeters,
-    };
   }
 
   async validateNfc(patrolId: string, userId: string, uid: string) {
@@ -794,13 +982,13 @@ export class PatrolsService {
     }
   }
 
-  private async updateRoundStatus(roundId: string) {
+  private async updateRoundStatus(roundId: string): Promise<void> {
     const round = await this.prisma.patrolRound.findUnique({
-      where: {
-        id: roundId,
-      },
+      where: { id: roundId },
       include: {
-        checkpoints: true,
+        checkpoints: {
+          orderBy: { sequence: 'asc' },
+        },
       },
     });
 
@@ -808,31 +996,33 @@ export class PatrolsService {
       return;
     }
 
-    const required = round.checkpoints.filter(
+    const requiredCheckpoints = round.checkpoints.filter(
       (checkpoint) => checkpoint.required,
     );
 
-    const completed = required.filter(
-      (checkpoint) => checkpoint.status === PatrolCheckpointStatus.COMPLETED,
-    );
+    const completedCount = requiredCheckpoints.filter(
+      (checkpoint) => checkpoint.status === 'COMPLETED',
+    ).length;
 
-    let status: PatrolRoundStatus;
+    const allRequiredCompleted =
+      requiredCheckpoints.length > 0 &&
+      completedCount === requiredCheckpoints.length;
 
-    if (required.length > 0 && completed.length === required.length) {
-      status = PatrolRoundStatus.COMPLETED;
-    } else if (completed.length > 0) {
-      status = PatrolRoundStatus.PARTIAL;
+    let status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED';
+
+    if (allRequiredCompleted) {
+      status = 'COMPLETED';
+    } else if (completedCount > 0) {
+      status = 'IN_PROGRESS';
     } else {
-      status = PatrolRoundStatus.MISSED;
+      status = round.status === 'IN_PROGRESS' ? 'IN_PROGRESS' : 'PENDING';
     }
 
     await this.prisma.patrolRound.update({
-      where: {
-        id: roundId,
-      },
+      where: { id: roundId },
       data: {
         status,
-        completedAt: status === PatrolRoundStatus.COMPLETED ? new Date() : null,
+        ...(allRequiredCompleted ? { completedAt: new Date() } : {}),
       },
     });
   }
@@ -921,9 +1111,21 @@ export class PatrolsService {
     return `PAT-${date}-${random}`;
   }
 
-  private startOfToday() {
-    const date = new Date();
+  private startOfToday(): Date {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Jakarta',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
 
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const values = Object.fromEntries(
+      parts.map((part) => [part.type, part.value]),
+    );
+
+    // Representasi tanggal kalender WIB pada tengah malam UTC.
+    return new Date(
+      `${values.year}-${values.month}-${values.day}T00:00:00.000Z`,
+    );
   }
 }

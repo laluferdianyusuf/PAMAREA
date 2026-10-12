@@ -8,7 +8,6 @@ import {
   Patch,
   Post,
   Query,
-  Request,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
@@ -102,11 +101,10 @@ export class PatrolScheduleController {
    * POST /patrol-schedules/:id/assignments
    * Menambahkan satpam ke jadwal yang sedang berjalan
    */
-  @Post(':id/assignments')
+  @Post(':id/assignment')
   async addAssignment(
     @Param('id') scheduleId: string,
     @Body() dto: AddAssignmentDto,
-    @Request() req: any,
     @CurrentUser() user: User,
   ) {
     return this.service.addAssignment(

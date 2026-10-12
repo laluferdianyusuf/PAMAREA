@@ -2,7 +2,9 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { cert, initializeApp } from 'firebase-admin/app';
+import { createRequire } from 'node:module';
 import { AppModule } from './app.module.js';
+const require = createRequire(import.meta.url);
 
 async function bootstrap() {
   const serviceAccount = require('../firebase-key.json');

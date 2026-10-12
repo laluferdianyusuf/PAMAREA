@@ -100,6 +100,35 @@ export class QuestionsService {
     });
   }
 
+  async findActiveByPoint(patrolPointId: string) {
+    const pointQuestions = await this.prisma.pointQuestion.findMany({
+      where: {
+        patrolPointId,
+        question: {
+          status: QuestionStatus.ACTIVE,
+        },
+      },
+      include: {
+        question: {
+          include: {
+            options: {
+              orderBy: {
+                sortOrder: 'asc',
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        sortOrder: 'asc',
+      },
+    });
+
+    return pointQuestions.map((item) => ({
+      ...item.question,
+    }));
+  }
+
   async findActive() {
     return this.prisma.question.findMany({
       where: {

@@ -72,12 +72,12 @@ export class CreatePatrolScheduleDto {
   @ArrayMinSize(1)
   @IsOptional()
   @IsDateString({}, { each: true })
-  dates: string[];
+  dates?: string[];
 
   @IsArray()
   @ArrayMinSize(1)
   @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => ScheduleAssignmentInput)
-  assignments: ScheduleAssignmentInput[];
+  assignments?: ScheduleAssignmentInput[];
 }

@@ -1,137 +1,370 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { PatrolRoundService } from '../schedule/services/patrol.round.service.js';
 
 @Injectable()
 export class DashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scheduleRoundService: PatrolRoundService,
+  ) {}
 
-  // MOBILE DASHBOARD (Untuk Satpam)
-  async getMobileDashboard(userId: string, siteId: string) {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  private readonly timeZone = 'Asia/Makassar';
 
-    // 1. Ambil Shift & Round Hari Ini untuk user tersebut
-    const todayRounds = await this.prisma.patrolRound.findMany({
-      where: {
-        assignment: { userId: userId, status: 'ACTIVE' },
-        scheduleDate: { date: today },
-      },
-      include: {
-        assignment: { include: { schedule: true } },
-        checkpoints: true,
-      },
-      orderBy: { scheduledStartAt: 'asc' },
-    });
+  /**
+   * Mendapatkan tanggal kalender hari ini berdasarkan WITA.
+   * Format: YYYY-MM-DD.
+   */
+  private getTodayDateKey(): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: this.timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
 
-    if (!todayRounds || todayRounds.length === 0) {
-      return { status: 'NO_SHIFT_TODAY', data: null };
+    const values = Object.fromEntries(
+      parts.map((part) => [part.type, part.value]),
+    );
+
+    return `${values.year}-${values.month}-${values.day}`;
+  }
+
+  private isValidDateKey(value: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return false;
     }
 
-    const currentSchedule = todayRounds[0].assignment.schedule;
+    const parsed = new Date(`${value}T00:00:00.000Z`);
 
-    // 2. Kalkulasi Progress & Checkpoints
+    return (
+      !Number.isNaN(parsed.getTime()) &&
+      parsed.toISOString().slice(0, 10) === value
+    );
+  }
+
+  private getWitaMonthRange(dateKey: string) {
+    const [year, month] = dateKey.split('-').map(Number);
+    const offsetMs = 8 * 60 * 60 * 1000;
+
+    const startOfMonth = new Date(Date.UTC(year, month - 1, 1) - offsetMs);
+
+    const startOfNextMonth = new Date(Date.UTC(year, month, 1) - offsetMs);
+
+    return { startOfMonth, startOfNextMonth };
+  }
+
+  private toWitaISOString(value: Date | string): string {
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException({
+        code: 'INVALID_DATETIME',
+        message: 'Tanggal patroli tidak valid',
+      });
+    }
+
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Makassar',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(date);
+
+    const values = Object.fromEntries(
+      parts.map((part) => [part.type, part.value]),
+    );
+
+    const milliseconds = String(date.getUTCMilliseconds()).padStart(3, '0');
+
+    return (
+      `${values.year}-${values.month}-${values.day}` +
+      `T${values.hour}:${values.minute}:${values.second}` +
+      `.${milliseconds}+08:00`
+    );
+  }
+
+  private getRemainingCheckpoints(
+    checkpoints: Array<{ status: string }>,
+  ): number {
+    const terminalStatuses = ['COMPLETED', 'MISSED', 'FAILED', 'CANCELLED'];
+
+    return checkpoints.filter(
+      (checkpoint) => !terminalStatuses.includes(checkpoint.status),
+    ).length;
+  }
+
+  async getMobileDashboard(userId: string, siteId: string) {
+    // Sinkronisasi ronde yang sudah melewati batas waktu.
+    await this.scheduleRoundService.syncOverdueRounds();
+
+    const dateKey = this.getTodayDateKey();
+
+    if (!this.isValidDateKey(dateKey)) {
+      throw new BadRequestException({
+        code: 'INVALID_DATE',
+        message: 'Tanggal harus menggunakan format YYYY-MM-DD',
+      });
+    }
+
+    const scheduleDate = new Date(`${dateKey}T00:00:00.000Z`);
+    const nowMs = Date.now();
+
+    const { startOfMonth, startOfNextMonth } = this.getWitaMonthRange(dateKey);
+
+    const [todayRounds, user, site] = await Promise.all([
+      this.prisma.patrolRound.findMany({
+        where: {
+          assignment: {
+            userId,
+            status: 'ACTIVE',
+            schedule: {
+              siteId,
+            },
+          },
+          scheduleDate: {
+            date: scheduleDate,
+          },
+        },
+        include: {
+          assignment: {
+            include: {
+              schedule: true,
+            },
+          },
+          checkpoints: true,
+        },
+        orderBy: {
+          scheduledStartAt: 'asc',
+        },
+      }),
+
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+        },
+      }),
+
+      this.prisma.site.findUnique({
+        where: { id: siteId },
+        select: {
+          id: true,
+          name: true,
+          address: true,
+        },
+      }),
+    ]);
+
+    if (!user) {
+      throw new NotFoundException('User tidak ditemukan');
+    }
+
+    if (!site) {
+      throw new NotFoundException('Site tidak ditemukan');
+    }
+
     let totalCheckpoints = 0;
     let completedCheckpoints = 0;
     let missedCheckpoints = 0;
 
-    todayRounds.forEach((round) => {
+    for (const round of todayRounds) {
       totalCheckpoints += round.checkpoints.length;
+
       completedCheckpoints += round.checkpoints.filter(
-        (c) => c.status === 'COMPLETED',
+        (checkpoint) => checkpoint.status === 'COMPLETED',
       ).length;
+
       missedCheckpoints += round.checkpoints.filter(
-        (c) => c.status === 'MISSED' || c.status === 'FAILED',
+        (checkpoint) =>
+          checkpoint.status === 'MISSED' || checkpoint.status === 'FAILED',
       ).length;
-    });
+    }
 
     const progressPercentage =
       totalCheckpoints === 0
         ? 0
         : Math.round((completedCheckpoints / totalCheckpoints) * 100);
 
-    // 3. Tentukan Next Patrol (Round yang belum selesai/sedang berjalan)
-    const nextRound = todayRounds.find(
-      (r) => r.status === 'PENDING' || r.status === 'IN_PROGRESS',
+    const activeRounds = todayRounds.filter(
+      (round) => round.status === 'IN_PROGRESS',
     );
 
-    // 4. Kinerja Bulan Ini (Performance)
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const currentRound =
+      activeRounds[0] ??
+      todayRounds.find((round) => {
+        if (round.status !== 'PENDING') {
+          return false;
+        }
+
+        const startMs = new Date(round.scheduledStartAt).getTime();
+
+        const endMs = new Date(round.scheduledEndAt).getTime();
+
+        return nowMs >= startMs && nowMs <= endMs;
+      }) ??
+      null;
+
+    const nextPendingRound =
+      todayRounds.find((round) => {
+        if (round.status !== 'PENDING') {
+          return false;
+        }
+
+        const startMs = new Date(round.scheduledStartAt).getTime();
+
+        const endMs = new Date(round.scheduledEndAt).getTime();
+
+        return startMs > nowMs && endMs >= nowMs;
+      }) ?? null;
+
+    const nextRound = currentRound ?? nextPendingRound;
+
+    const currentSchedule =
+      currentRound?.assignment.schedule ??
+      nextPendingRound?.assignment.schedule ??
+      todayRounds[0]?.assignment.schedule ??
+      null;
+
     const monthlyRounds = await this.prisma.patrolRound.findMany({
       where: {
-        assignment: { userId: userId },
-        scheduledStartAt: { gte: startOfMonth },
+        assignment: {
+          userId,
+          schedule: {
+            siteId,
+          },
+        },
+        scheduledStartAt: {
+          gte: startOfMonth,
+          lt: startOfNextMonth,
+        },
       },
-      select: { status: true },
+      select: {
+        status: true,
+      },
     });
 
     const totalMonthlyRounds = monthlyRounds.length;
+
     const completedMonthlyRounds = monthlyRounds.filter(
-      (r) => r.status === 'COMPLETED',
+      (round) => round.status === 'COMPLETED',
     ).length;
+
     const performanceScore =
       totalMonthlyRounds === 0
         ? 100
         : Math.round((completedMonthlyRounds / totalMonthlyRounds) * 100);
 
+    const performanceLabel =
+      performanceScore >= 90
+        ? 'Sangat Baik'
+        : performanceScore >= 75
+          ? 'Baik'
+          : 'Perlu Peningkatan';
+
+    if (todayRounds.length === 0) {
+      return {
+        status: 'NO_SHIFT_TODAY',
+        data: {
+          user,
+          site,
+          shift: null,
+          progress: {
+            percentage: 0,
+            completed: 0,
+            missed: 0,
+            total: 0,
+          },
+          nextPatrol: null,
+          performance: {
+            monthlyScore: performanceScore,
+            label: performanceLabel,
+          },
+        },
+      };
+    }
+
     return {
       status: 'SUCCESS',
       data: {
-        shift: {
-          scheduleName: currentSchedule.name,
-          startTime: currentSchedule.startTime,
-          endTime: currentSchedule.endTime,
-          intervalMinutes: currentSchedule.intervalMinutes,
-        },
+        user,
+        site,
+
+        shift: currentSchedule
+          ? {
+              scheduleName: currentSchedule.name,
+              startTime: currentSchedule.startTime,
+              endTime: currentSchedule.endTime,
+              intervalMinutes: currentSchedule.intervalMinutes,
+            }
+          : null,
+
         progress: {
           percentage: progressPercentage,
           completed: completedCheckpoints,
           missed: missedCheckpoints,
           total: totalCheckpoints,
         },
+
         nextPatrol: nextRound
           ? {
               roundId: nextRound.id,
               roundNumber: nextRound.roundNumber,
-              scheduledStartAt: nextRound.scheduledStartAt,
-              scheduledEndAt: nextRound.scheduledEndAt,
+              scheduledStartAt: this.toWitaISOString(
+                nextRound.scheduledStartAt,
+              ),
+              scheduledEndAt: this.toWitaISOString(nextRound.scheduledEndAt),
               status: nextRound.status,
               remainingCheckpoints: nextRound.checkpoints.filter(
-                (c) => c.status === 'PENDING',
+                (checkpoint) => checkpoint.status === 'PENDING',
               ).length,
             }
           : null,
+
         performance: {
           monthlyScore: performanceScore,
-          label:
-            performanceScore >= 90
-              ? 'Sangat Baik'
-              : performanceScore >= 75
-                ? 'Baik'
-                : 'Perlu Peningkatan',
+          label: performanceLabel,
         },
       },
     };
   }
 
-  // ADMIN DASHBOARD (Untuk Command Center / Web)
   async getAdminDashboard(
     siteId: string,
     startDate: Date,
     endDate: Date,
     scheduleId?: string,
   ) {
-    // 1. Buat Filter Dinamis (Conditional Where)
-    // Jika scheduleId dikirim, tambahkan ke dalam filter. Jika tidak, abaikan.
-
     const scheduleFilter = scheduleId ? { id: scheduleId } : {};
+
     const patrolScheduleFilter = scheduleId
-      ? { scheduleAssignment: { scheduleId: scheduleId } }
-      : {};
-    const findingScheduleFilter = scheduleId
-      ? { patrol: { scheduleAssignment: { scheduleId: scheduleId } } }
+      ? {
+          scheduleAssignment: {
+            scheduleId,
+          },
+        }
       : {};
 
-    // Mulai Eksekusi Query Secara Paralel
+    const findingScheduleFilter = scheduleId
+      ? {
+          patrol: {
+            scheduleAssignment: {
+              scheduleId,
+            },
+          },
+        }
+      : {};
+
     const [
       activeOfficersCount,
       checkpointsStat,
@@ -139,78 +372,125 @@ export class DashboardService {
       recentPatrols,
       criticalFindings,
     ] = await Promise.all([
-      // 1. Total Patrol Officers berdasarkan Site, Periode, dan Shift (Schedule)
       this.prisma.patrolScheduleAssignment.count({
         where: {
-          schedule: { siteId: siteId, ...scheduleFilter },
-          startDate: { lte: endDate },
+          schedule: {
+            siteId,
+            ...scheduleFilter,
+          },
+          startDate: {
+            lte: endDate,
+          },
           OR: [{ endDate: null }, { endDate: { gte: startDate } }],
           status: 'ACTIVE',
         },
       }),
 
-      // 2. Active Patrol Checkpoints (berdasarkan scheduleDate di dalam periode)
       this.prisma.patrolCheckpoint.groupBy({
         by: ['status'],
         where: {
           round: {
-            scheduleDate: { date: { gte: startDate, lt: endDate } },
-            assignment: { schedule: { siteId: siteId, ...scheduleFilter } },
+            scheduleDate: {
+              date: {
+                gte: startDate,
+                lt: endDate,
+              },
+            },
+            assignment: {
+              schedule: {
+                siteId,
+                ...scheduleFilter,
+              },
+            },
           },
         },
-        _count: { id: true },
+        _count: {
+          id: true,
+        },
       }),
 
-      // 3. Out-Of-Radius / Alerts (Insiden dalam periode & shift tertentu)
       this.prisma.patrol.count({
         where: {
-          siteId: siteId,
-          startedAt: { gte: startDate, lt: endDate },
+          siteId,
+          startedAt: {
+            gte: startDate,
+            lt: endDate,
+          },
           ...patrolScheduleFilter,
           OR: [{ gpsValidationStatus: 'INVALID' }, { status: 'FAILED' }],
         },
       }),
 
-      // 4. Recent Patrol Executions (berdasarkan periode & shift)
       this.prisma.patrol.findMany({
         where: {
-          siteId: siteId,
-          startedAt: { gte: startDate, lt: endDate },
+          siteId,
+          startedAt: {
+            gte: startDate,
+            lt: endDate,
+          },
           ...patrolScheduleFilter,
         },
-        orderBy: { startedAt: 'desc' },
+        orderBy: {
+          startedAt: 'desc',
+        },
         take: 6,
         include: {
-          user: { select: { fullName: true } },
-          patrolPoint: { select: { name: true, code: true } },
+          user: {
+            select: {
+              fullName: true,
+            },
+          },
+          patrolPoint: {
+            select: {
+              name: true,
+              code: true,
+            },
+          },
         },
       }),
 
-      // 5. Critical Findings Feed (berdasarkan periode & shift)
       this.prisma.finding.findMany({
         where: {
-          patrolPoint: { siteId: siteId },
-          createdAt: { gte: startDate, lt: endDate },
+          patrolPoint: {
+            siteId,
+          },
+          createdAt: {
+            gte: startDate,
+            lt: endDate,
+          },
           status: 'OPEN',
-          severity: { in: ['CRITICAL', 'HIGH', 'MEDIUM'] },
+          severity: {
+            in: ['CRITICAL', 'HIGH', 'MEDIUM'],
+          },
           ...findingScheduleFilter,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: {
+          createdAt: 'desc',
+        },
         take: 5,
         include: {
-          reportedBy: { select: { fullName: true } },
-          patrolPoint: { select: { name: true } },
+          reportedBy: {
+            select: {
+              fullName: true,
+            },
+          },
+          patrolPoint: {
+            select: {
+              name: true,
+            },
+          },
         },
       }),
     ]);
 
-    // Kalkulasi summary dari GroupBy
     const totalCheckpoints = checkpointsStat.reduce(
       (acc, curr) => acc + curr._count.id,
       0,
     );
+
     const completedCheckpoints =
-      checkpointsStat.find((c) => c.status === 'COMPLETED')?._count.id || 0;
+      checkpointsStat.find((checkpoint) => checkpoint.status === 'COMPLETED')
+        ?._count.id ?? 0;
 
     return {
       status: 'SUCCESS',
@@ -219,25 +499,28 @@ export class DashboardService {
           totalOfficers: activeOfficersCount,
           targetOfficers: 40,
           activeCheckpoints: totalCheckpoints,
-          completedCheckpoints: completedCheckpoints,
+          completedCheckpoints,
           outOfRadiusAlerts: outOfRadiusCount,
         },
-        recentExecutions: recentPatrols.map((p) => ({
-          id: p.id,
-          guardName: p.user.fullName,
-          checkpointNode: p.patrolPoint.name,
-          nfcStatus: p.nfcValidationStatus,
-          gpsStatus: p.gpsValidationStatus === 'VALID' ? 'On Site' : 'Off Site',
-          timestamp: p.startedAt,
+
+        recentExecutions: recentPatrols.map((patrol) => ({
+          id: patrol.id,
+          guardName: patrol.user.fullName,
+          checkpointNode: patrol.patrolPoint.name,
+          nfcStatus: patrol.nfcValidationStatus,
+          gpsStatus:
+            patrol.gpsValidationStatus === 'VALID' ? 'On Site' : 'Off Site',
+          timestamp: patrol.startedAt,
         })),
-        criticalFindingsFeed: criticalFindings.map((f) => ({
-          id: f.id,
-          severity: f.severity,
-          title: f.title,
-          guardName: f.reportedBy.fullName,
-          location: f.patrolPoint.name,
-          timestamp: f.createdAt,
-          description: f.description,
+
+        criticalFindingsFeed: criticalFindings.map((finding) => ({
+          id: finding.id,
+          severity: finding.severity,
+          title: finding.title,
+          guardName: finding.reportedBy.fullName,
+          location: finding.patrolPoint.name,
+          timestamp: finding.createdAt,
+          description: finding.description,
         })),
       },
     };

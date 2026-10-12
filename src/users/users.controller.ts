@@ -27,6 +27,11 @@ export class UsersController {
     return this.usersService.findAllUsers();
   }
 
+  @Get('security')
+  findAllSecurityUsers() {
+    return this.usersService.findAllSecurityUsers();
+  }
+
   @Get('active')
   findActive() {
     return this.usersService.findAllActiveUsers();

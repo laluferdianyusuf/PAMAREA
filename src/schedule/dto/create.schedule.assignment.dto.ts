@@ -1,4 +1,12 @@
-import { IsDateString, IsNotEmpty, IsOptional, IsUUID } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsDateString,
+  IsNotEmpty,
+  IsOptional,
+  IsUUID,
+  ValidateNested,
+} from 'class-validator';
 
 export class CreateScheduleAssignmentDto {
   @IsUUID()

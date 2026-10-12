@@ -14,11 +14,8 @@ export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
   @Get('mobile')
-  async getMyDashboard(
-    @Query('siteId') siteId: string,
-    @CurrentUser() user: User,
-  ) {
-    return this.dashboardService.getMobileDashboard(user.id, siteId);
+  async getMyDashboard(@CurrentUser() user: User) {
+    return this.dashboardService.getMobileDashboard(user.id, user.siteId ?? '');
   }
 
   @Get('admin')

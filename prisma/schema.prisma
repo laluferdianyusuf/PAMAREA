@@ -74,13 +74,6 @@ enum QuestionStatus {
   INACTIVE
 }
 
-// ============================================================
-// NEW
-// ============================================================
-// Status khusus untuk Schedule.
-// Sebelumnya Schedule menggunakan AssignmentStatus.
-// Lebih baik dipisahkan karena lifecycle Schedule berbeda
-// dengan lifecycle Assignment.
 enum ScheduleStatus {
   DRAFT
   ACTIVE
@@ -88,48 +81,18 @@ enum ScheduleStatus {
   ARCHIVED
 }
 
-// ============================================================
-// NEW
-// ============================================================
-// Menunjukkan status tanggal schedule.
-//
-// Contoh:
-// Schedule "Shift Pagi"
-// 01 Oktober → SCHEDULED
-// 02 Oktober → SCHEDULED
-// 03 Oktober → CANCELLED
 enum ScheduleDateStatus {
   SCHEDULED
   CANCELLED
   COMPLETED
 }
 
-// ============================================================
-// NEW
-// ============================================================
-// Status assignment user terhadap schedule.
 enum ScheduleAssignmentStatus {
   ACTIVE
   INACTIVE
   EXPIRED
 }
 
-// ============================================================
-// NEW
-// ============================================================
-// Status satu round.
-//
-// Contoh:
-// 09:00 - 11:00
-//
-// Jika semua titik selesai:
-// COMPLETED
-//
-// Jika sebagian selesai:
-// PARTIAL
-//
-// Jika tidak ada patroli:
-// MISSED
 enum PatrolRoundStatus {
   PENDING
   IN_PROGRESS
@@ -139,17 +102,6 @@ enum PatrolRoundStatus {
   CANCELLED
 }
 
-// ============================================================
-// NEW
-// ============================================================
-// Status kewajiban satu titik dalam satu round.
-//
-// Contoh:
-// Round 1
-// ├── Gerbang     COMPLETED
-// ├── Parkiran    COMPLETED
-// ├── Gudang      MISSED
-// └── Belakang    COMPLETED
 enum PatrolCheckpointStatus {
   PENDING
   IN_PROGRESS
@@ -661,43 +613,12 @@ model PatrolSchedule {
 
   endTime String @map("end_time") @db.VarChar(5)
 
-  // Jarak waktu antar round dalam menit.
-  //
-  // Contoh:
-  //
-  // start 09:00
-  // interval 120
-  //
-  // Round 1 → 09:00
-  // Round 2 → 11:00
-  //
   intervalMinutes Int @map("interval_minutes")
 
-  // Toleransi keterlambatan.
-  //
-  // Contoh:
-  // Round dijadwalkan selesai 11:00
-  // grace = 30
-  //
-  // sampai 11:30 masih dianggap dalam toleransi.
   gracePeriodMinutes Int @default(30) @map("grace_period_minutes")
 
-  // Apakah urutan titik harus mengikuti sequence.
-  //
-  // false:
-  // Budi boleh ke Gudang dulu kemudian Gerbang.
-  //
-  // true:
-  // Budi harus mengikuti urutan SchedulePoint.
   enforceSequence Boolean @default(false) @map("enforce_sequence")
 
-  // ----------------------------------------------------------
-  // CHANGED
-  // ----------------------------------------------------------
-  // Sebelumnya menggunakan AssignmentStatus.
-  //
-  // Sekarang menggunakan ScheduleStatus karena lifecycle
-  // Schedule berbeda dengan Assignment.
   status ScheduleStatus @default(DRAFT)
 
   createdById String @map("created_by_id") @db.Uuid
@@ -706,17 +627,8 @@ model PatrolSchedule {
 
   createdBy User @relation("ScheduleCreator", fields: [createdById], references: [id])
 
-  // Daftar PatrolPoint yang wajib ada di setiap Round.
   points PatrolSchedulePoint[]
 
-  // Tanggal-tanggal schedule aktif.
-  //
-  // Contoh:
-  // Schedule Shift Pagi
-  // ├── 01 Oct
-  // ├── 02 Oct
-  // ├── 03 Oct
-  // └── ...
   dates PatrolScheduleDate[]
 
   // User yang ditugaskan ke schedule.
@@ -735,20 +647,6 @@ model PatrolSchedule {
 // ============================================================
 // PATROL SCHEDULE POINT
 // ============================================================
-//
-// Menentukan titik mana saja yang wajib dipatroli
-// dalam SETIAP ROUND.
-//
-// Contoh:
-//
-// Schedule Shift Pagi
-//
-// SchedulePoint:
-// 1. Gerbang
-// 2. Parkiran
-// 3. Gudang
-// 4. Belakang
-// 5. Mesin
 
 model PatrolSchedulePoint {
   id String @id @default(uuid()) @db.Uuid
@@ -776,25 +674,6 @@ model PatrolSchedulePoint {
 // ============================================================
 // PATROL SCHEDULE DATE
 // ============================================================
-//
-// NEW MODEL.
-//
-// Schedule = template/rule.
-//
-// ScheduleDate = actual date ketika schedule berlaku.
-//
-// Contoh:
-//
-// Schedule:
-// Shift Pagi 09:00 - 12:00
-//
-// ScheduleDate:
-// 01 Oktober
-// 02 Oktober
-// 03 Oktober
-// ...
-// 31 Oktober
-
 model PatrolScheduleDate {
   id String @id @default(uuid()) @db.Uuid
 
@@ -806,14 +685,8 @@ model PatrolScheduleDate {
 
   schedule PatrolSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
 
-  // NEW
-  // Round aktual pada tanggal tersebut.
-  //
-  // Round dibuat untuk setiap ScheduleAssignment.
   rounds PatrolRound[]
 
-  // NEW
-  // User yang membuat/menghasilkan tanggal schedule.
   createdById String? @map("created_by_id") @db.Uuid
 
   createdBy User? @relation(fields: [createdById], references: [id])
@@ -821,8 +694,6 @@ model PatrolScheduleDate {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  // Satu schedule tidak boleh mempunyai tanggal yang sama
-  // lebih dari satu kali.
   @@unique([scheduleId, date])
   @@index([date, status])
   @@index([scheduleId, status])
@@ -832,26 +703,6 @@ model PatrolScheduleDate {
 // ============================================================
 // PATROL SCHEDULE ASSIGNMENT
 // ============================================================
-//
-// NEW MODEL.
-//
-// Menentukan SIAPA yang bertugas pada Schedule.
-//
-// Contoh:
-//
-// Schedule Shift Pagi
-//
-// 01 - 15 Oktober → Budi
-// 16 - 31 Oktober → Andi
-//
-// Atau:
-//
-// 01 - 31 Oktober → Budi
-// 01 - 31 Oktober → Andi
-//
-// Jika Budi dan Andi sama-sama aktif di tanggal yang sama,
-// maka masing-masing mendapatkan Round dan Checkpoint sendiri.
-
 model PatrolScheduleAssignment {
   id String @id @default(uuid()) @db.Uuid
 
@@ -873,8 +724,6 @@ model PatrolScheduleAssignment {
 
   createdBy User @relation("ScheduleAssignmentCreator", fields: [createdById], references: [id])
 
-  // NEW
-  // Round milik user ini.
   rounds PatrolRound[]
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -891,33 +740,6 @@ model PatrolScheduleAssignment {
 // ============================================================
 // PATROL ROUND
 // ============================================================
-//
-// NEW MODEL.
-//
-// Ini adalah SATU PUTARAN patroli.
-//
-// Contoh Schedule:
-//
-// 09:00 - 12:00
-// Interval 2 jam
-//
-// Maka:
-//
-// Round 1 → 09:00 - 11:00
-// Round 2 → 11:00 - 12:00
-//
-// Jika Budi ditugaskan:
-//
-// Round 1 Budi
-// Round 2 Budi
-//
-// Jika Andi juga ditugaskan:
-//
-// Round 1 Andi
-// Round 2 Andi
-//
-// Masing-masing mempunyai checkpoint sendiri.
-
 model PatrolRound {
   id String @id @default(uuid()) @db.Uuid
 

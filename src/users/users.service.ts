@@ -79,6 +79,30 @@ export class UsersService {
     };
   }
 
+  async findAllSecurityUsers() {
+    const users = await this.prisma.user.findMany({
+      where: {
+        role: {
+          name: 'SECURITY',
+        },
+        status: UserStatus.ACTIVE,
+        deletedAt: null,
+      },
+      include: {
+        role: true,
+        site: true,
+      },
+      orderBy: {
+        fullName: 'asc',
+      },
+    });
+
+    return {
+      message: 'Data satpam aktif berhasil ditemukan',
+      data: users.map((user) => this.sanitizeUser(user)),
+    };
+  }
+
   async createUser(dto: CreateUserDto, createdById?: string) {
     try {
       const existingUsername = await this.prisma.user.findUnique({

@@ -4,6 +4,7 @@ import { AuthService } from './auth.service.js';
 
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { LoginDto } from './dto/login.dto.js';
 import { RefreshTokenDto } from './dto/refresh-token.dto.js';
 import { RegisterDto } from './dto/register.js';
@@ -34,11 +35,8 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(
-    @CurrentUser('userId')
-    userId: string,
-  ) {
-    return this.authService.getMe(userId);
+  me(@CurrentUser() user: User) {
+    return this.authService.getMe(user.id);
   }
 
   @Post('logout')

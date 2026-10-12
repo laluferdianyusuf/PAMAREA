@@ -18,6 +18,7 @@ import { ScheduleFilterDto } from '../dto/schedule.filter.dto.js';
 import { UpdatePatrolScheduleDto } from '../dto/update.schedule.dto.js';
 import { PatrolSchedulePolicy } from '../policies/patrol.schedule.policy.service.js';
 import { PatrolScheduleRepository } from '../repositories/patrol-schedule.repository.js';
+import { ScheduleGenerationService } from './schedule.generation.service.js';
 
 @Injectable()
 export class PatrolScheduleService {
@@ -25,10 +26,13 @@ export class PatrolScheduleService {
     private readonly prisma: PrismaService,
     private readonly repository: PatrolScheduleRepository,
     private readonly policy: PatrolSchedulePolicy,
+    private readonly generationService: ScheduleGenerationService,
   ) {}
 
   async create(dto: CreatePatrolScheduleDto, createdById: string) {
     this.validateTimeRange(dto.startTime, dto.endTime);
+    const dates = dto.dates ?? [];
+    const assignments = dto.assignments ?? [];
 
     const pointIds = dto.points.map((point) => point.patrolPointId);
 
@@ -38,7 +42,7 @@ export class PatrolScheduleService {
       throw new ConflictException('Patrol point tidak boleh duplikat');
     }
 
-    const userIds = dto.assignments.map((assignment) => assignment.userId);
+    const userIds = assignments.map((assignment) => assignment.userId);
 
     const uniqueUserIds = [...new Set(userIds)];
 
@@ -50,10 +54,13 @@ export class PatrolScheduleService {
       this.validateDates(dto.dates);
     }
 
-    if (dto.assignments && dto.assignments.length > 0) {
-      this.validateAssignments(dto);
+    if (assignments.length > 0) {
+      this.validateAssignments({
+        ...dto,
+        assignments,
+      } as CreatePatrolScheduleDto);
 
-      const userIds = dto.assignments.map((a) => a.userId);
+      const userIds = assignments.map((a) => a.userId);
       const uniqueUserIds = [...new Set(userIds)];
       if (uniqueUserIds.length !== userIds.length) {
         throw new ConflictException('User assignment tidak boleh duplikat');
@@ -153,27 +160,30 @@ export class PatrolScheduleService {
         })),
       });
 
-      await tx.patrolScheduleDate.createMany({
-        data: dto.dates.map((date) => ({
-          scheduleId: schedule.id,
-          date: this.parseDateOnly(date),
-          status: ScheduleDateStatus.SCHEDULED,
-          createdById,
-        })),
-      });
-
-      await tx.patrolScheduleAssignment.createMany({
-        data: dto.assignments.map((assignment) => ({
-          scheduleId: schedule.id,
-          userId: assignment.userId,
-          startDate: this.parseDateOnly(assignment.startDate),
-          endDate: assignment.endDate
-            ? this.parseDateOnly(assignment.endDate)
-            : null,
-          status: ScheduleAssignmentStatus.ACTIVE,
-          createdById,
-        })),
-      });
+      if (dates.length > 0) {
+        await tx.patrolScheduleDate.createMany({
+          data: dates.map((date) => ({
+            scheduleId: schedule.id,
+            date: this.parseDateOnly(date),
+            status: ScheduleDateStatus.SCHEDULED,
+            createdById,
+          })),
+        });
+      }
+      if (assignments.length > 0) {
+        await tx.patrolScheduleAssignment.createMany({
+          data: assignments.map((assignment) => ({
+            scheduleId: schedule.id,
+            userId: assignment.userId,
+            startDate: this.parseDateOnly(assignment.startDate),
+            endDate: assignment.endDate
+              ? this.parseDateOnly(assignment.endDate)
+              : null,
+            status: ScheduleAssignmentStatus.ACTIVE,
+            createdById,
+          })),
+        });
+      }
 
       return tx.patrolSchedule.findUnique({
         where: {
@@ -419,12 +429,30 @@ export class PatrolScheduleService {
       schedule.assignments.length,
     );
 
-    return this.prisma.patrolSchedule.update({
+    const updatedSchedule = await this.prisma.patrolSchedule.update({
       where: { id },
       data: {
         status: 'ACTIVE',
       },
     });
+
+    const scheduledDates = schedule.dates
+      .filter((item) => item.status === 'SCHEDULED')
+      .map((item) => {
+        const date = new Date(item.date);
+        return date.toISOString().split('T')[0];
+      })
+      .sort();
+
+    if (scheduledDates.length > 0) {
+      await this.generationService.generate(id, {
+        startDate: scheduledDates[0],
+        endDate: scheduledDates[scheduledDates.length - 1],
+        force: false,
+      });
+    }
+
+    return updatedSchedule;
   }
 
   async archive(id: string) {
@@ -489,6 +517,15 @@ export class PatrolScheduleService {
       skipDuplicates: true,
     });
 
+    const today = new Date().toISOString().split('T')[0];
+
+    if (newDates.includes(today)) {
+      await this.generationService.generate(scheduleId, {
+        startDate: today,
+        endDate: today,
+      });
+    }
+
     return { message: 'Berhasil memperpanjang tanggal schedule' };
   }
 
@@ -520,7 +557,7 @@ export class PatrolScheduleService {
       );
     }
 
-    return this.prisma.patrolScheduleAssignment.create({
+    const assignment = await this.prisma.patrolScheduleAssignment.create({
       data: {
         scheduleId,
         userId,
@@ -530,6 +567,17 @@ export class PatrolScheduleService {
         createdById,
       },
     });
+
+    const today = new Date().toISOString().split('T')[0];
+
+    if (startDate <= today && (!endDate || endDate >= today)) {
+      await this.generationService.generate(scheduleId, {
+        startDate: today,
+        endDate: today,
+      });
+    }
+
+    return assignment;
   }
 
   // FITUR BARU: UBAH/NONAKTIFKAN TUGAS SATPAM (Misal: Resign/Cuti/Diganti)
@@ -559,14 +607,14 @@ export class PatrolScheduleService {
     });
   }
 
-  // FITUR BARU: TAMBAH AREA/TITIK BARU KE JADWAL (Menyisipkan Checkpoint)
+  // FITUR BARU: TAMBAH AREA/TITIK BARU KE JADWAL
   async addPoint(
     scheduleId: string,
     patrolPointId: string,
     insertAtSequence: number,
     required = true,
   ) {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const schedule = await tx.patrolSchedule.findUnique({
         where: { id: scheduleId },
         include: { points: true },
@@ -608,6 +656,14 @@ export class PatrolScheduleService {
         },
       });
     });
+
+    const today = new Date().toISOString().split('T')[0];
+    await this.generationService.generate(scheduleId, {
+      startDate: today,
+      endDate: today,
+    });
+
+    return result;
   }
 
   // PERBAIKAN BUG: VALIDASI JAM LINTAS HARI (OVERNIGHT SHIFT)
@@ -630,7 +686,9 @@ export class PatrolScheduleService {
   }
 
   private validateAssignments(dto: CreatePatrolScheduleDto) {
-    for (const assignment of dto.assignments) {
+    const assignments = dto.assignments ?? [];
+
+    for (const assignment of assignments) {
       if (assignment.endDate && assignment.endDate < assignment.startDate) {
         throw new BadRequestException(
           `endDate tidak boleh lebih kecil dari startDate untuk user ${assignment.userId}`,
