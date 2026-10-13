@@ -26,7 +26,7 @@ export class EmergencyService {
           siteId: siteId,
           role: { name: 'SECURITY' },
           status: 'ACTIVE',
-          id: { not: senderId },
+          // id: { not: senderId },
         },
         include: {
           devices: {
@@ -70,68 +70,69 @@ export class EmergencyService {
     }
   }
 
-  /**
-   * Helper function untuk mengirim FCM Notification beserta Lokasi
-   */
   private async sendFcmEmergencyAlert(
     tokens: string[],
     senderName: string,
-    locationData: { latitude?: number; longitude?: number; note?: string },
+    locationData: {
+      latitude?: number;
+      longitude?: number;
+      note?: string;
+    },
   ) {
-    // 1. Siapkan custom payload data
-    // Aturan FCM: Semua value di dalam 'data' HARUS berformat string.
-    const customPayloadData: Record<string, string> = {
-      type: 'EMERGENCY_ALERT',
-      click_action: 'FLUTTER_NOTIFICATION_CLICK', // Sesuaikan jika pakai React Native
-      senderName: senderName,
-      timestamp: new Date().toISOString(),
-    };
-
-    // 2. Masukkan koordinat jika dikirim dari mobile
-    if (locationData.latitude && locationData.longitude) {
-      customPayloadData.latitude = locationData.latitude.toString();
-      customPayloadData.longitude = locationData.longitude.toString();
-    }
-
-    if (locationData.note) {
-      customPayloadData.note = locationData.note;
-    }
+    // Waktu backend mulai menyiapkan pesan.
+    const preparedAt = new Date().toISOString();
 
     const payload: MulticastMessage = {
-      tokens: tokens,
-      notification: {
-        title: '🚨 DARURAT 🚨',
-        body: `${senderName} menekan tombol darurat! Segera merapat untuk memberikan bantuan.`,
-      },
+      tokens,
       android: {
         priority: 'high',
-        notification: {
-          channelId: 'emergency_channel',
-          sound: 'emergency_siren',
-          defaultSound: false,
-          defaultVibrateTimings: false,
-        },
+        ttl: 60 * 1000,
       },
-      apns: {
-        payload: {
-          aps: {
-            sound: 'emergency_siren.wav',
-            badge: 1,
-            'interruption-level': 'critical',
-          },
-        },
+      data: {
+        type: 'EMERGENCY_ALERT',
+        senderName,
+        timestamp: preparedAt,
+        ...(locationData.latitude != null
+          ? { latitude: String(locationData.latitude) }
+          : {}),
+        ...(locationData.longitude != null
+          ? { longitude: String(locationData.longitude) }
+          : {}),
+        ...(locationData.note ? { note: locationData.note } : {}),
       },
-      // 3. Sisipkan custom payload ke dalam property data
-      data: customPayloadData,
     };
+
+    const startedAt = Date.now();
+
+    console.log('[SOS BACKEND] Preparing FCM:', {
+      senderName,
+      tokenCount: tokens.length,
+      preparedAt,
+    });
 
     try {
       const response = await getMessaging().sendEachForMulticast(payload);
-      console.log(
-        `FCM Sent -> Sukses: ${response.successCount}, Gagal: ${response.failureCount}`,
-      );
+
+      console.log('[SOS BACKEND] FCM result:', {
+        senderName,
+        preparedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        successCount: response.successCount,
+        failureCount: response.failureCount,
+      });
+
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          console.error('[SOS BACKEND] FCM failed:', {
+            tokenIndex: index,
+            error: result.error?.message,
+          });
+        }
+      });
     } catch (error) {
-      console.error('Failed to send FCM payload:', error);
+      console.error('[SOS BACKEND] Failed to send FCM:', error);
+      throw error;
     }
   }
 }

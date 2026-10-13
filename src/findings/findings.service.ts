@@ -384,6 +384,12 @@ export class FindingsService {
         id: true,
         code: true,
         name: true,
+        site: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     },
     photos: true,
@@ -409,6 +415,12 @@ export class FindingsService {
         id: true,
         code: true,
         name: true,
+        site: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     },
   };
