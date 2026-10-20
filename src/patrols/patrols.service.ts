@@ -5,6 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { UploadedFile } from '../common/types/uploaded-file.type.js';
+import { EmergencyService } from '../emergency/emergency.service.js';
 import {
   GpsValidationStatus,
   NfcValidationStatus,
@@ -29,6 +30,7 @@ export class PatrolsService {
     private readonly gpsValidationService: GpsValidationService,
     private readonly nfcValidationService: NfcValidationService,
     private readonly storageService: StorageService,
+    private readonly emergencyService: EmergencyService,
   ) {}
 
   async getToday(userId: string) {
@@ -890,6 +892,21 @@ export class PatrolsService {
       await this.updateRoundStatus(patrol.checkpoint!.round.id);
     }
 
+    const unsafeAnswers = await this.findUnsafeAnswers(patrolId);
+
+    if (unsafeAnswers.length > 0) {
+      try {
+        await this.emergencyService.broadcastPatrolWarning(userId, {
+          siteId: patrol.siteId,
+          reportNumber: result.reportNumber,
+          patrolPointName: patrol.patrolPoint.name,
+          unsafeAnswers,
+        });
+      } catch (error) {
+        console.error('[PATROL WARNING] Gagal mengirim notifikasi FCM:', error);
+      }
+    }
+
     return this.getPatrol(result.id, userId);
   }
 
@@ -1127,5 +1144,46 @@ export class PatrolsService {
     return new Date(
       `${values.year}-${values.month}-${values.day}T00:00:00.000Z`,
     );
+  }
+
+  private async findUnsafeAnswers(patrolId: string) {
+    const answers = await this.prisma.patrolAnswer.findMany({
+      where: { patrolId },
+      include: {
+        question: {
+          include: { options: true },
+        },
+      },
+    });
+
+    return answers.flatMap((answer) => {
+      const value = answer.answerValue?.trim();
+
+      if (answer.question.questionType === 'YES_NO' && value === 'NO') {
+        return [
+          {
+            question: answer.questionTextSnapshot,
+            answer: answer.answerLabelSnapshot ?? value,
+          },
+        ];
+      }
+
+      if (answer.question.questionType === 'SINGLE_CHOICE') {
+        const option = answer.question.options.find(
+          (item) => item.value === value,
+        );
+
+        if (option && !option.isSafe) {
+          return [
+            {
+              question: answer.questionTextSnapshot,
+              answer: answer.answerLabelSnapshot ?? option.label,
+            },
+          ];
+        }
+      }
+
+      return [];
+    });
   }
 }

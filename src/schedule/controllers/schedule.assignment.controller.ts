@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
@@ -19,37 +20,28 @@ import {
 } from '../dto/create.schedule.assignment.dto.js';
 import { PatrolScheduleAssignmentService } from '../services/patrol.schedule.assignment.service.js';
 
-@Controller('patrol-schedules/:scheduleId/assignments')
+@Controller('patrol-schedule-assignments')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PatrolScheduleAssignmentController {
   constructor(private readonly service: PatrolScheduleAssignmentService) {}
 
-  @Post('assign')
+  @Post('schedules/:scheduleId/assign')
   @Roles(RoleName.ADMIN)
   create(
-    @Param('scheduleId')
-    scheduleId: string,
-    @Body()
-    dto: CreateScheduleAssignmentDto,
-    @CurrentUser()
-    user: User,
+    @Param('scheduleId') scheduleId: string,
+    @Body() dto: CreateScheduleAssignmentDto,
+    @CurrentUser() user: User,
   ) {
     return this.service.create(scheduleId, dto, user.id);
   }
 
-  @Post('assignments/bulk')
+  @Post('bulk')
+  @Roles(RoleName.ADMIN)
   async bulkAssignSatpam(
     @Body() dto: BulkAssignUserDto,
-    @CurrentUser() user: any, // Ambil ID admin yang sedang login
+    @CurrentUser() user: User,
   ) {
     const result = await this.service.bulkAssignUser(dto, user.id);
-
-    // Opsional: Langsung panggil generate() jika shift-nya melibatkan tanggal hari ini
-    // Agar satpam langsung mendapat tugas di aplikasinya hari ini juga
-    // const hariIni = new Date().toISOString().split('T')[0];
-    // for (const assignment of result) {
-    //    await this.generationService.generate(assignment.scheduleId, { startDate: hariIni, endDate: hariIni });
-    // }
 
     return {
       message: 'Jadwal shift bergilir berhasil disimpan',
@@ -59,20 +51,19 @@ export class PatrolScheduleAssignmentController {
 
   @Get()
   @Roles(RoleName.ADMIN)
-  findAll(
-    @Param('scheduleId')
-    scheduleId: string,
-  ) {
-    return this.service.findAll(scheduleId);
+  findAll(@Query('scheduleId') scheduleId?: string) {
+    if (scheduleId) {
+      return this.service.findAll(scheduleId);
+    }
+
+    return this.service.findAllAssignments();
   }
 
-  @Delete(':assignmentId')
+  @Delete('schedules/:scheduleId/:assignmentId')
   @Roles(RoleName.ADMIN)
   remove(
-    @Param('scheduleId')
-    scheduleId: string,
-    @Param('assignmentId')
-    assignmentId: string,
+    @Param('scheduleId') scheduleId: string,
+    @Param('assignmentId') assignmentId: string,
   ) {
     return this.service.remove(scheduleId, assignmentId);
   }

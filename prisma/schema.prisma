@@ -14,6 +14,8 @@ datasource db {
 enum RoleName {
   ADMIN
   SECURITY
+  DANRU_SECURITY
+  CHIEF_SECURITY
 }
 
 enum UserStatus {
@@ -152,6 +154,13 @@ enum FindingStatus {
   OPEN
   IN_PROGRESS
   RESOLVED
+}
+
+enum ShiftChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
 }
 
 // ============================================================
@@ -377,7 +386,7 @@ model PatrolPoint {
 
   radiusMeters Int @default(30) @map("radius_meters")
 
-  status PatrolPointStatus @default(ACTIVE)
+  status PatrolPointStatus @default(INACTIVE)
 
   deletedAt DateTime? @map("deleted_at")
 
@@ -521,7 +530,7 @@ model Question {
 
   isRequired Boolean @default(true) @map("is_required")
 
-  photoRequirement PhotoRequirement @default(NONE) @map("photo_requirement")
+  photoRequirement PhotoRequirement @default(REQUIRED) @map("photo_requirement")
 
   status QuestionStatus @default(ACTIVE)
 
@@ -557,6 +566,8 @@ model QuestionOption {
 
   sortOrder Int @default(0) @map("sort_order")
 
+  isSafe Boolean @default(false) @map("is_safe")
+
   question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -582,6 +593,8 @@ model PointQuestion {
   isRequired Boolean @default(true) @map("is_required")
 
   createdById String @map("created_by_id") @db.Uuid
+
+ 
 
   patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
@@ -726,15 +739,47 @@ model PatrolScheduleAssignment {
 
   rounds PatrolRound[]
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  patrols   Patrol[]
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+  patrols              Patrol[]
+  shiftChangesAsFirst  ShiftChange[] @relation("ShiftChangeFirstAssignment")
+  shiftChangesAsSecond ShiftChange[] @relation("ShiftChangeSecondAssignment")
 
   @@unique([scheduleId, userId, startDate])
   @@index([scheduleId, status])
   @@index([userId, status])
   @@index([startDate, endDate])
   @@map("patrol_schedule_assignments")
+}
+
+model ShiftChange {
+  id                 String @id @default(uuid()) @db.Uuid
+  firstAssignmentId  String @map("first_assignment_id") @db.Uuid
+  secondAssignmentId String @map("second_assignment_id") @db.Uuid
+
+  effectiveDate DateTime  @map("effective_date") @db.Date
+  effectiveAt   DateTime? @map("effective_at") @db.Timestamptz(3)
+
+  reason String?           @db.VarChar(500)
+  status ShiftChangeStatus @default(PENDING)
+
+  requestedById String    @map("requested_by_id") @db.Uuid
+  approvedById  String?   @map("approved_by_id") @db.Uuid
+  approvedAt    DateTime? @map("approved_at") @db.Timestamptz(3)
+  rejectedAt    DateTime? @map("rejected_at") @db.Timestamptz(3)
+  cancelledAt   DateTime? @map("cancelled_at") @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  firstAssignment PatrolScheduleAssignment @relation("ShiftChangeFirstAssignment", fields: [firstAssignmentId], references: [id], onDelete: Restrict)
+
+  secondAssignment PatrolScheduleAssignment @relation("ShiftChangeSecondAssignment", fields: [secondAssignmentId], references: [id], onDelete: Restrict)
+
+  @@index([effectiveDate, status])
+  @@index([firstAssignmentId, effectiveDate])
+  @@index([secondAssignmentId, effectiveDate])
+  @@map("shift_changes")
 }
 
 // ============================================================
@@ -749,14 +794,8 @@ model PatrolRound {
 
   roundNumber Int @map("round_number")
 
-  // Waktu aktual yang dihitung dari Schedule.
-  //
-  // Contoh:
-  // 2026-10-01 09:00
   scheduledStartAt DateTime @map("scheduled_start_at")
 
-  // Contoh:
-  // 2026-10-01 11:00
   scheduledEndAt DateTime @map("scheduled_end_at")
 
   status PatrolRoundStatus @default(PENDING)
@@ -769,8 +808,6 @@ model PatrolRound {
 
   assignment PatrolScheduleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
 
-  // Semua titik yang wajib dipatroli
-  // pada round ini.
   checkpoints PatrolCheckpoint[]
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -787,28 +824,6 @@ model PatrolRound {
 // ============================================================
 // PATROL CHECKPOINT
 // ============================================================
-//
-// NEW MODEL.
-//
-// Checkpoint = SATU KEWAJIBAN mengunjungi SATU PatrolPoint
-// dalam SATU Round.
-//
-// Contoh:
-//
-// Round 1
-//
-// Checkpoint:
-// ├── Gerbang
-// ├── Parkiran
-// ├── Gudang
-// ├── Belakang
-// └── Mesin
-//
-// Jadi kalau ada 5 PatrolPoint dan 2 Round:
-//
-// 5 × 2 = 10 Checkpoint.
-//
-// Ini yang memungkinkan sistem mendeteksi titik yang dilewati.
 
 model PatrolCheckpoint {
   id String @id @default(uuid()) @db.Uuid
@@ -823,15 +838,6 @@ model PatrolCheckpoint {
 
   status PatrolCheckpointStatus @default(PENDING)
 
-  // ----------------------------------------------------------
-  // SNAPSHOT
-  // ----------------------------------------------------------
-  //
-  // NEW.
-  //
-  // Digunakan supaya histori tetap konsisten walaupun
-  // PatrolPoint nanti diubah nama/code/radius-nya.
-
   pointCodeSnapshot String @map("point_code_snapshot") @db.VarChar(50)
 
   pointNameSnapshot String @map("point_name_snapshot") @db.VarChar(150)
@@ -844,10 +850,6 @@ model PatrolCheckpoint {
 
   patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  // Actual execution.
-  //
-  // Satu checkpoint normalnya mempunyai maksimal satu
-  // actual Patrol.
   patrols Patrol[]
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -863,34 +865,6 @@ model PatrolCheckpoint {
 // ============================================================
 // PATROL
 // ============================================================
-//
-// CHANGED.
-//
-// Sebelumnya:
-//
-// Patrol = satu aktivitas patrol terhadap satu PatrolPoint.
-//
-// Sekarang:
-//
-// Patrol = ACTUAL EXECUTION dari satu PatrolCheckpoint.
-//
-// Jadi:
-//
-// PatrolRound
-//    ↓
-// PatrolCheckpoint
-//    ↓
-// Patrol
-//
-// Patrol menyimpan bukti aktual:
-// - GPS
-// - NFC
-// - waktu
-// - device
-// - validation
-//
-// Dengan model ini, Checkpoint tetap menjadi "kewajiban",
-// sedangkan Patrol menjadi "bukti pelaksanaan".
 
 model Patrol {
   id String @id @default(uuid()) @db.Uuid
@@ -903,17 +877,8 @@ model Patrol {
 
   patrolPointId String @map("patrol_point_id") @db.Uuid
 
-  // ----------------------------------------------------------
-  // CHANGED
-  // ----------------------------------------------------------
-  //
-  // Sebelumnya assignmentId adalah PatrolAssignment.
-  //
-  // Sekarang actual patrol berasal dari ScheduleAssignment.
-  //
   scheduleAssignmentId String? @map("schedule_assignment_id") @db.Uuid
 
-  // NEW
   checkpointId String? @map("checkpoint_id") @db.Uuid
 
   deviceId String? @map("device_id") @db.Uuid
@@ -921,10 +886,6 @@ model Patrol {
   startedAt DateTime @default(now()) @map("started_at")
 
   completedAt DateTime? @map("completed_at")
-
-  // ----------------------------------------------------------
-  // GPS
-  // ----------------------------------------------------------
 
   latitude Decimal? @db.Decimal(10, 7)
 
@@ -936,14 +897,8 @@ model Patrol {
 
   gpsValidationStatus GpsValidationStatus @default(UNAVAILABLE) @map("gps_validation_status")
 
-  // ----------------------------------------------------------
-  // NFC
-  // ----------------------------------------------------------
-
   nfcTagId String? @map("nfc_tag_id") @db.Uuid
 
-  // Snapshot UID supaya histori tetap ada walaupun NFC
-  // nantinya diganti.
   nfcUidSnapshot String? @map("nfc_uid_snapshot") @db.VarChar(255)
 
   nfcValidationStatus NfcValidationStatus @default(FAILED) @map("nfc_validation_status")
@@ -956,20 +911,14 @@ model Patrol {
 
   status PatrolStatus @default(STARTED)
 
-  // ----------------------------------------------------------
-  // RELATIONS
-  // ----------------------------------------------------------
-
   user User @relation(fields: [userId], references: [id])
 
   site Site @relation(fields: [siteId], references: [id])
 
   patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  // NEW
   scheduleAssignment PatrolScheduleAssignment? @relation(fields: [scheduleAssignmentId], references: [id])
 
-  // NEW
   checkpoint PatrolCheckpoint? @relation(fields: [checkpointId], references: [id])
 
   device UserDevice? @relation(fields: [deviceId], references: [id])
@@ -1002,11 +951,6 @@ model Patrol {
 // ============================================================
 // PATROL ANSWER
 // ============================================================
-//
-// Snapshot question tetap dipertahankan.
-//
-// Ini penting karena admin bisa mengubah pertanyaan
-// setelah patroli dilakukan.
 
 model PatrolAnswer {
   id String @id @default(uuid()) @db.Uuid
@@ -1154,19 +1098,6 @@ model FindingPhoto {
 // ============================================================
 // AUDIT LOG
 // ============================================================
-//
-// Penting untuk enterprise.
-//
-// Admin melakukan:
-//
-// CREATE Schedule
-// UPDATE Schedule
-// DELETE/CANCEL Schedule
-// Assign User
-// Replace NFC
-// Update Patrol Point
-//
-// Semua dapat dicatat.
 
 model AuditLog {
   id String @id @default(uuid()) @db.Uuid

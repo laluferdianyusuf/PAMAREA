@@ -6,6 +6,7 @@ import { PatrolScheduleDateController } from './controllers/patrol.schedule.date
 import { PatrolScheduleGenerationController } from './controllers/patrol.schedule.generation.controller.js';
 import { PatrolSchedulePointController } from './controllers/patrol.schedule.point.controller.js';
 import { PatrolScheduleAssignmentController } from './controllers/schedule.assignment.controller.js';
+import { ShiftChangeController } from './controllers/shift.change.controller.js';
 import { ScheduleCronService } from './cron/schedule.cron.service.js';
 import { PatrolSchedulePolicy } from './policies/patrol.schedule.policy.service.js';
 import { PatrolScheduleRepository } from './repositories/patrol-schedule.repository.js';
@@ -16,6 +17,7 @@ import { PatrolScheduleDateService } from './services/patrol.schedule.date.servi
 import { PatrolSchedulePointService } from './services/patrol.schedule.point.service.js';
 import { PatrolScheduleService } from './services/patrol.schedule.service.js';
 import { ScheduleGenerationService } from './services/schedule.generation.service.js';
+import { ShiftChangeService } from './services/shift.change.service.js';
 
 @Module({
   controllers: [
@@ -26,6 +28,7 @@ import { ScheduleGenerationService } from './services/schedule.generation.servic
     PatrolScheduleGenerationController,
     PatrolRoundController,
     PatrolCheckpointController,
+    ShiftChangeController,
   ],
 
   providers: [
@@ -41,6 +44,7 @@ import { ScheduleGenerationService } from './services/schedule.generation.servic
     PatrolRoundService,
     PatrolCheckpointService,
     ScheduleCronService,
+    ShiftChangeService,
   ],
 
   exports: [

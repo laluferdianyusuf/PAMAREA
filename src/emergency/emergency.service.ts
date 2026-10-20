@@ -20,7 +20,6 @@ export class EmergencyService {
         throw new Error('Pengirim tidak ditemukan');
       }
 
-      // Cari semua Satpam Aktif di Site yang sama, KECUALI si pelapor
       const targetGuards = await this.prisma.user.findMany({
         where: {
           siteId: siteId,
@@ -51,7 +50,6 @@ export class EmergencyService {
         };
       }
 
-      // Kirim Push Notification beserta data lokasi pelapor
       await this.sendFcmEmergencyAlert(
         fcmTokens,
         sender.fullName,
@@ -70,6 +68,132 @@ export class EmergencyService {
     }
   }
 
+  async broadcastPatrolWarning(
+    senderId: string,
+    data: {
+      siteId: string;
+      reportNumber: string;
+      patrolPointName: string;
+      unsafeAnswers: {
+        question: string;
+        answer: string;
+      }[];
+    },
+  ) {
+    const sender = await this.prisma.user.findUnique({
+      where: { id: senderId },
+      select: { fullName: true },
+    });
+
+    if (!sender) {
+      throw new Error('Pengirim peringatan tidak ditemukan');
+    }
+
+    const targetGuards = await this.prisma.user.findMany({
+      where: {
+        role: { name: 'SECURITY' },
+        status: 'ACTIVE',
+      },
+      select: {
+        devices: {
+          where: { status: 'ACTIVE' },
+          select: { deviceIdentifier: true },
+        },
+      },
+    });
+
+    const tokens = [
+      ...new Set(
+        targetGuards.flatMap((guard) =>
+          guard.devices
+            .map((device) => device.deviceIdentifier)
+            .filter((token): token is string => Boolean(token)),
+        ),
+      ),
+    ];
+
+    if (tokens.length === 0) {
+      return {
+        status: 'NO_ACTIVE_DEVICES',
+        successCount: 0,
+        failureCount: 0,
+      };
+    }
+
+    const unsafeSummary = data.unsafeAnswers
+      .map(
+        (item, index) =>
+          `${index + 1}. ${item.question} — Jawaban: ${item.answer}`,
+      )
+      .join('\n');
+
+    const payload: MulticastMessage = {
+      tokens: [],
+      notification: {
+        title: 'Peringatan Hasil Patroli',
+        body:
+          `${data.unsafeAnswers.length} jawaban perlu diperiksa ` +
+          `di titik ${data.patrolPointName}.`,
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'patrol_warning',
+          sound: 'default',
+        },
+      },
+      data: {
+        type: 'PATROL_WARNING',
+        senderName: sender.fullName,
+        siteId: data.siteId,
+        reportNumber: data.reportNumber,
+        patrolPointName: data.patrolPointName,
+        unsafeCount: String(data.unsafeAnswers.length),
+        unsafeAnswers: JSON.stringify(data.unsafeAnswers),
+        summary: unsafeSummary,
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    for (let i = 0; i < tokens.length; i += 500) {
+      const batch = tokens.slice(i, i + 500);
+
+      const response = await getMessaging().sendEachForMulticast({
+        ...payload,
+        tokens: batch,
+      });
+
+      successCount += response.successCount;
+      failureCount += response.failureCount;
+
+      response.responses.forEach((result, index) => {
+        if (!result.success) {
+          console.error('[PATROL WARNING] FCM gagal:', {
+            tokenIndex: i + index,
+            error: result.error?.message,
+          });
+        }
+      });
+    }
+
+    console.log('[PATROL WARNING] Broadcast selesai:', {
+      reportNumber: data.reportNumber,
+      totalDevices: tokens.length,
+      successCount,
+      failureCount,
+    });
+
+    return {
+      status: 'SUCCESS',
+      totalDevices: tokens.length,
+      successCount,
+      failureCount,
+    };
+  }
+
   private async sendFcmEmergencyAlert(
     tokens: string[],
     senderName: string,
@@ -79,7 +203,6 @@ export class EmergencyService {
       note?: string;
     },
   ) {
-    // Waktu backend mulai menyiapkan pesan.
     const preparedAt = new Date().toISOString();
 
     const payload: MulticastMessage = {

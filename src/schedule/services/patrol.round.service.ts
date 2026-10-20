@@ -31,6 +31,14 @@ export class PatrolRoundService {
         },
         scheduleDate: true,
         checkpoints: {
+          include: {
+            patrolPoint: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
           orderBy: {
             sequence: 'asc',
           },

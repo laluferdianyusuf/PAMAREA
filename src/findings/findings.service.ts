@@ -423,5 +423,12 @@ export class FindingsService {
         },
       },
     },
+    photos: {
+      select: {
+        id: true,
+        findingId: true,
+        fileUrl: true,
+      },
+    },
   };
 }

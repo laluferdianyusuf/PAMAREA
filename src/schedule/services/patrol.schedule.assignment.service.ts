@@ -101,7 +101,6 @@ export class PatrolScheduleAssignmentService {
 
   // FITUR BARU: ROSTERING / ATUR SHIFT BERGILIR UNTUK 1 SATPAM
   async bulkAssignUser(dto: BulkAssignUserDto, createdById: string) {
-    // 1. Validasi User
     const user = await this.prisma.user.findFirst({
       where: { id: dto.userId, status: 'ACTIVE', role: { name: 'SECURITY' } },
     });
@@ -113,9 +112,7 @@ export class PatrolScheduleAssignmentService {
     return this.prisma.$transaction(async (tx) => {
       const createdAssignments = [];
 
-      // 2. Looping data jadwal yang dikirim admin
       for (const assign of dto.assignments) {
-        // Cek apakah schedule-nya valid
         const schedule = await tx.patrolSchedule.findUnique({
           where: { id: assign.scheduleId },
         });
@@ -137,7 +134,6 @@ export class PatrolScheduleAssignmentService {
           );
         }
 
-        // 3. Insert ke database
         const newAssignment = await tx.patrolScheduleAssignment.create({
           data: {
             scheduleId: assign.scheduleId,
@@ -174,6 +170,27 @@ export class PatrolScheduleAssignmentService {
       orderBy: {
         startDate: 'asc',
       },
+    });
+  }
+
+  async findAllAssignments() {
+    return this.prisma.patrolScheduleAssignment.findMany({
+      include: {
+        user: true,
+        schedule: {
+          include: {
+            site: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          startDate: 'desc',
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
     });
   }
 

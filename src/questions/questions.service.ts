@@ -45,19 +45,81 @@ export class QuestionsService {
   }
 
   async create(dto: CreateQuestionDto, createdById: string) {
-    const code = dto.code.trim().toUpperCase();
-
-    const existing = await this.prisma.question.findUnique({
-      where: {
-        code,
-      },
-    });
-
-    if (existing) {
-      throw new ConflictException(`Question code "${code}" sudah digunakan`);
-    }
-
     this.validateQuestionConfiguration(dto.questionType, dto.photoRequirement);
+
+    const code = await this.generateQuestionCode();
+
+    let options: {
+      value: string;
+      label: string;
+      sortOrder: number;
+      isSafe: boolean;
+    }[] = [];
+
+    switch (dto.questionType) {
+      case 'YES_NO':
+        options = [
+          {
+            value: 'YES',
+            label: 'Ya',
+            sortOrder: 1,
+            isSafe: true,
+          },
+          {
+            value: 'NO',
+            label: 'Tidak',
+            sortOrder: 2,
+            isSafe: false,
+          },
+        ];
+        break;
+
+      case 'SINGLE_CHOICE': {
+        if (!dto.questionOptions?.length) {
+          throw new BadRequestException(
+            'Question options wajib diisi untuk SINGLE_CHOICE',
+          );
+        }
+
+        const normalizedOptions = dto.questionOptions.map((option) => ({
+          label: option.label.trim(),
+          isSafe: option.isSafe ?? false,
+        }));
+
+        if (normalizedOptions.some((option) => !option.label)) {
+          throw new BadRequestException('Question options tidak boleh kosong');
+        }
+
+        const uniqueLabels = normalizedOptions.map((option) =>
+          option.label.toLowerCase(),
+        );
+
+        if (new Set(uniqueLabels).size !== uniqueLabels.length) {
+          throw new BadRequestException(
+            'Question options tidak boleh duplikat',
+          );
+        }
+
+        options = normalizedOptions.map((option, index) => ({
+          value: option.label.toUpperCase(),
+          label: option.label,
+          sortOrder: index + 1,
+          isSafe: option.isSafe,
+        }));
+
+        break;
+      }
+
+      case 'TEXT':
+        if (dto.questionOptions?.length) {
+          throw new BadRequestException(
+            'Question type TEXT tidak membutuhkan options',
+          );
+        }
+
+        options = [];
+        break;
+    }
 
     return this.prisma.question.create({
       data: {
@@ -65,10 +127,12 @@ export class QuestionsService {
         questionText: dto.questionText.trim(),
         questionType: dto.questionType,
         isRequired: dto.isRequired ?? true,
-        photoRequirement: dto.photoRequirement ?? 'NONE',
-        createdById: createdById,
+        photoRequirement: dto.photoRequirement ?? 'REQUIRED',
+        createdById,
+        options: {
+          create: options,
+        },
       },
-
       include: this.questionInclude(),
     });
   }
@@ -398,5 +462,33 @@ export class QuestionsService {
     ) {
       throw new BadRequestException('Question type tidak valid');
     }
+  }
+
+  private async generateQuestionCode(): Promise<string> {
+    const lastQuestion = await this.prisma.question.findFirst({
+      where: {
+        code: {
+          startsWith: 'QST-',
+        },
+      },
+      orderBy: {
+        code: 'desc',
+      },
+      select: {
+        code: true,
+      },
+    });
+
+    let nextNumber = 1;
+
+    if (lastQuestion) {
+      const lastNumber = Number(lastQuestion.code.replace('QST-', ''));
+
+      if (Number.isInteger(lastNumber) && lastNumber > 0) {
+        nextNumber = lastNumber + 1;
+      }
+    }
+
+    return `QST-${String(nextNumber).padStart(4, '0')}`;
   }
 }
