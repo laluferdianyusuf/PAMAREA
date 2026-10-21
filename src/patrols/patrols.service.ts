@@ -805,31 +805,36 @@ export class PatrolsService {
     if (!file) {
       throw new BadRequestException({
         code: 'PHOTO_REQUIRED',
-        message: 'File foto wajib diupload',
+        message: 'File foto wajib diupload.',
       });
     }
 
     if (!file.mimetype.startsWith('image/')) {
       throw new BadRequestException({
         code: 'INVALID_FILE_TYPE',
-        message: 'File yang diupload harus berupa gambar',
+        message: 'File yang diupload harus berupa gambar.',
       });
     }
 
-    if (dto.answerId) {
-      const answer = await this.prisma.patrolAnswer.findFirst({
-        where: {
-          id: dto.answerId,
-          patrolId,
-        },
+    if (!dto.answerId) {
+      throw new BadRequestException({
+        code: 'ANSWER_ID_REQUIRED',
+        message: 'Foto wajib dikaitkan dengan jawaban pertanyaan.',
       });
+    }
 
-      if (!answer) {
-        throw new BadRequestException({
-          code: 'ANSWER_NOT_FOUND',
-          message: 'Answer tidak ditemukan pada patrol ini',
-        });
-      }
+    const answer = await this.prisma.patrolAnswer.findFirst({
+      where: {
+        id: dto.answerId,
+        patrolId,
+      },
+    });
+
+    if (!answer) {
+      throw new BadRequestException({
+        code: 'ANSWER_NOT_FOUND',
+        message: 'Jawaban tidak ditemukan pada patroli ini.',
+      });
     }
 
     const uploadedFile = await this.storageService.saveImage(file);
@@ -837,13 +842,11 @@ export class PatrolsService {
     const photo = await this.prisma.patrolPhoto.create({
       data: {
         patrolId,
-        answerId: dto.answerId ?? null,
-
+        answerId: answer.id,
         fileUrl: uploadedFile.url,
         fileName: file.originalname,
         mimeType: file.mimetype,
         fileSize: file.size,
-
         latitude: dto.latitude ?? null,
         longitude: dto.longitude ?? null,
         capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : new Date(),
@@ -960,41 +963,68 @@ export class PatrolsService {
     patrolId: string,
     patrolPointId: string,
   ) {
-    const questions = await this.prisma.pointQuestion.findMany({
-      where: {
-        patrolPointId,
-        question: {
-          photoRequirement: 'REQUIRED',
-        },
-      },
+    const pointQuestions = await this.prisma.pointQuestion.findMany({
+      where: { patrolPointId },
       include: {
         question: true,
       },
+      orderBy: {
+        sortOrder: 'asc',
+      },
     });
-
-    if (questions.length === 0) {
-      return;
-    }
 
     const answers = await this.prisma.patrolAnswer.findMany({
-      where: {
-        patrolId,
-        questionId: {
-          in: questions.map((item) => item.questionId),
-        },
-      },
+      where: { patrolId },
       include: {
-        photos: true,
+        photos: {
+          select: { id: true },
+        },
       },
     });
 
-    const missing = answers.filter((answer) => answer.photos.length === 0);
+    const answerMap = new Map(
+      answers.map((answer) => [answer.questionId, answer]),
+    );
 
-    if (missing.length > 0) {
+    const missingAnswers: {
+      questionId: string;
+      question: string;
+    }[] = [];
+
+    const missingPhotos: {
+      questionId: string;
+      question: string;
+      answerId: string | null;
+    }[] = [];
+
+    for (const pointQuestion of pointQuestions) {
+      const answer = answerMap.get(pointQuestion.questionId);
+
+      if (!answer || !answer.answerValue?.trim()) {
+        missingAnswers.push({
+          questionId: pointQuestion.questionId,
+          question: pointQuestion.question.questionText,
+        });
+
+        continue;
+      }
+
+      if (answer.photos.length === 0) {
+        missingPhotos.push({
+          questionId: pointQuestion.questionId,
+          question: answer.questionTextSnapshot,
+          answerId: answer.id,
+        });
+      }
+    }
+
+    if (missingAnswers.length > 0 || missingPhotos.length > 0) {
       throw new UnprocessableEntityException({
-        code: 'REQUIRED_PHOTOS_MISSING',
-        message: 'Masih ada foto wajib yang belum diupload',
-        questionIds: missing.map((item) => item.questionId),
+        code: 'PATROL_CHECKLIST_INCOMPLETE',
+        message:
+          'Setiap pertanyaan wajib dijawab dan disertai minimal satu foto.',
+        missingAnswers,
+        missingPhotos,
       });
     }
   }
