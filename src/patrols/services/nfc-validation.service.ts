@@ -40,6 +40,13 @@ export class NfcValidationService {
       });
     }
 
+    if (typeof uid !== 'string' || !uid.trim()) {
+      throw new UnprocessableEntityException({
+        code: 'INVALID_NFC_UID',
+        message: 'UID NFC wajib berupa string dan tidak boleh kosong',
+      });
+    }
+
     const normalizedUid = uid.trim().toUpperCase();
 
     const nfcTag = await this.prisma.nfcTag.findUnique({

@@ -1,8 +1,7 @@
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class ValidateNfcDto {
   @IsString()
   @IsNotEmpty()
-  @MaxLength(100)
-  uid: string;
+  nfcUid: string;
 }

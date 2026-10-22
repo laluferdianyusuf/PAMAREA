@@ -289,41 +289,6 @@ export class PatrolsService {
       },
     });
 
-    // console.dir(
-    //   {
-    //     today: today.toISOString(),
-    //     now: now.toISOString(),
-    //     assignments: assignments.map((assignment) => ({
-    //       assignmentId: assignment.id,
-    //       status: assignment.status,
-    //       startDate: assignment.startDate,
-    //       endDate: assignment.endDate,
-    //       schedule: {
-    //         id: assignment.schedule.id,
-    //         name: assignment.schedule.name,
-    //         startTime: assignment.schedule.startTime,
-    //         endTime: assignment.schedule.endTime,
-    //         intervalMinutes: assignment.schedule.intervalMinutes,
-    //         enforceSequence: assignment.schedule.enforceSequence,
-    //       },
-    //       rounds: assignment.rounds.map((round) => ({
-    //         id: round.id,
-    //         status: round.status,
-    //         scheduleDate: round.scheduleDate.date,
-    //         scheduledStartAt: round.scheduledStartAt.toISOString(),
-    //         scheduledEndAt: round.scheduledEndAt.toISOString(),
-    //         checkpoints: round.checkpoints.map((checkpoint) => ({
-    //           id: checkpoint.id,
-    //           sequence: checkpoint.sequence,
-    //           status: checkpoint.status,
-    //           required: checkpoint.required,
-    //         })),
-    //       })),
-    //     })),
-    //   },
-    //   { depth: null },
-    // );
-
     const rounds = assignments
       .flatMap((assignment) =>
         assignment.rounds.map((round) => ({
@@ -417,27 +382,6 @@ export class PatrolsService {
         deviceId: deviceId ?? '',
       });
     }
-
-    console.log('[NO AVAILABLE CHECKPOINT]', {
-      userId,
-      today: today.toISOString(),
-      now: now.toISOString(),
-      assignments: assignments.map((assignment) => ({
-        assignmentId: assignment.id,
-        scheduleName: assignment.schedule.name,
-        rounds: assignment.rounds.map((round) => ({
-          id: round.id,
-          status: round.status,
-          scheduledStartAt: round.scheduledStartAt,
-          scheduledEndAt: round.scheduledEndAt,
-          checkpoints: round.checkpoints.map((checkpoint) => ({
-            id: checkpoint.id,
-            status: checkpoint.status,
-            required: checkpoint.required,
-          })),
-        })),
-      })),
-    });
 
     throw new UnprocessableEntityException({
       code: 'NO_AVAILABLE_CHECKPOINT',

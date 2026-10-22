@@ -24,6 +24,7 @@ import { StartPatrolDto } from './dto/start-patrol.dto.js';
 import { SubmitAnswersDto } from './dto/submit-answers.dto.js';
 import { SubmitPhotoDto } from './dto/submit-photo.dto.js';
 import { ValidateLocationDto } from './dto/validate-location.dto.js';
+import { ValidateNfcDto } from './dto/validate-nfc.dto.js';
 
 @Controller('patrols')
 @UseGuards(JwtAuthGuard)
@@ -67,9 +68,9 @@ export class PatrolsController {
   validateNfc(
     @Param('patrolId') patrolId: string,
     @CurrentUser() user: User,
-    @Body() uid: string,
+    @Body() dto: ValidateNfcDto,
   ) {
-    return this.patrolsService.validateNfc(patrolId, user.id, uid);
+    return this.patrolsService.validateNfc(patrolId, user.id, dto.nfcUid);
   }
 
   @Post(':patrolId/bypass-nfc')

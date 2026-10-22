@@ -61,7 +61,6 @@ export class EmergencyService {
         message: `Peringatan darurat berhasil dikirim ke ${fcmTokens.length} perangkat.`,
       };
     } catch (error) {
-      console.error('Error on broadcastEmergency:', error);
       throw new InternalServerErrorException(
         'Gagal memproses peringatan darurat',
       );
@@ -179,13 +178,6 @@ export class EmergencyService {
       });
     }
 
-    console.log('[PATROL WARNING] Broadcast selesai:', {
-      reportNumber: data.reportNumber,
-      totalDevices: tokens.length,
-      successCount,
-      failureCount,
-    });
-
     return {
       status: 'SUCCESS',
       totalDevices: tokens.length,
@@ -227,12 +219,6 @@ export class EmergencyService {
 
     const startedAt = Date.now();
 
-    console.log('[SOS BACKEND] Preparing FCM:', {
-      senderName,
-      tokenCount: tokens.length,
-      preparedAt,
-    });
-
     try {
       const response = await getMessaging().sendEachForMulticast(payload);
 
@@ -254,7 +240,6 @@ export class EmergencyService {
         }
       });
     } catch (error) {
-      console.error('[SOS BACKEND] Failed to send FCM:', error);
       throw error;
     }
   }

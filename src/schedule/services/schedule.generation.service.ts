@@ -126,20 +126,6 @@ export class ScheduleGenerationService {
       schedule.intervalMinutes,
     );
 
-    console.dir(
-      {
-        schedule: schedule.name,
-        timezone: 'Asia/Makassar',
-        date: ScheduleTimeUtil.formatDate(date),
-        rounds: rounds.map((round) => ({
-          roundNumber: round.roundNumber,
-          start: ScheduleTimeUtil.formatTimestamp(round.scheduledStartAt),
-          end: ScheduleTimeUtil.formatTimestamp(round.scheduledEndAt),
-        })),
-      },
-      { depth: null },
-    );
-
     for (const assignment of activeAssignments) {
       for (const round of rounds) {
         const existingRound = await this.prisma.patrolRound.findUnique({
