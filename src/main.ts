@@ -28,8 +28,6 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
-  console.log('Upload directory:', uploadDirectory);
-
   // CORS
   app.enableCors({
     origin: true,
