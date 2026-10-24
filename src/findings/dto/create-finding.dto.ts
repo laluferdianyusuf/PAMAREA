@@ -1,6 +1,7 @@
 import {
   IsEnum,
   IsNotEmpty,
+  IsOptional,
   IsString,
   IsUUID,
   MaxLength,
@@ -26,5 +27,6 @@ export class CreateFindingDto {
   description: string;
 
   @IsEnum(FindingSeverity)
-  severity: FindingSeverity;
+  @IsOptional()
+  severity?: FindingSeverity;
 }

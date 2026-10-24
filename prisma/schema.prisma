@@ -408,8 +408,9 @@ model PatrolPoint {
 
   checkpoints PatrolCheckpoint[]
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt                      DateTime                        @default(now()) @map("created_at")
+  updatedAt                      DateTime                        @updatedAt @map("updated_at")
+  patrolScheduleAssignmentPoints PatrolScheduleAssignmentPoint[]
 
   @@unique([siteId, code])
   @@index([siteId])
@@ -594,8 +595,6 @@ model PointQuestion {
 
   createdById String @map("created_by_id") @db.Uuid
 
- 
-
   patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
   question Question @relation(fields: [questionId], references: [id])
@@ -737,7 +736,8 @@ model PatrolScheduleAssignment {
 
   createdBy User @relation("ScheduleAssignmentCreator", fields: [createdById], references: [id])
 
-  rounds PatrolRound[]
+  rounds       PatrolRound[]
+  patrolPoints PatrolScheduleAssignmentPoint[]
 
   createdAt            DateTime      @default(now()) @map("created_at")
   updatedAt            DateTime      @updatedAt @map("updated_at")
@@ -750,6 +750,24 @@ model PatrolScheduleAssignment {
   @@index([userId, status])
   @@index([startDate, endDate])
   @@map("patrol_schedule_assignments")
+}
+
+model PatrolScheduleAssignmentPoint {
+  id            String @id @default(uuid()) @db.Uuid
+  assignmentId  String @map("assignment_id") @db.Uuid
+  patrolPointId String @map("patrol_point_id") @db.Uuid
+
+  sequence Int
+  required Boolean @default(true)
+
+  assignment PatrolScheduleAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id], onDelete: Restrict)
+
+  @@unique([assignmentId, patrolPointId])
+  @@unique([assignmentId, sequence])
+  @@index([assignmentId, sequence])
+  @@map("patrol_schedule_assignment_points")
 }
 
 model ShiftChange {

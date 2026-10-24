@@ -40,6 +40,18 @@ export class PatrolScheduleController {
   findAll(@Query() query: ScheduleFilterDto) {
     return this.service.findAll(query);
   }
+  /**
+   * GET /patrol-schedules/roster?siteId=xxx&month=10&year=2026
+   * Mengambil data roster bulanan untuk Dashboard Admin
+   */
+  @Get('roster')
+  async getMonthlyRoster(
+    @Query('siteId') siteId: string,
+    @Query('month', ParseIntPipe) month: number,
+    @Query('year', ParseIntPipe) year: number,
+  ) {
+    return this.service.getMonthlyRoster(siteId, month, year);
+  }
 
   @Get(':id')
   @Roles(RoleName.ADMIN)
@@ -69,19 +81,6 @@ export class PatrolScheduleController {
   @Roles(RoleName.ADMIN)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
-  }
-
-  /**
-   * GET /patrol-schedules/roster?siteId=xxx&month=10&year=2026
-   * Mengambil data roster bulanan untuk Dashboard Admin
-   */
-  @Get('roster')
-  async getMonthlyRoster(
-    @Query('siteId') siteId: string,
-    @Query('month', ParseIntPipe) month: number,
-    @Query('year', ParseIntPipe) year: number,
-  ) {
-    return this.service.getMonthlyRoster(siteId, month, year);
   }
 
   /**

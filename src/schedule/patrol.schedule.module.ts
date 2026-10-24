@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PatrolScheduleAssignmentRouteController } from './controllers/patrol-schedule-assignment-route.controller.js';
 import { PatrolCheckpointController } from './controllers/patrol.checkpoint.controller.js';
 import { PatrolRoundController } from './controllers/patrol.round.controller.js';
 import { PatrolScheduleController } from './controllers/patrol.schedule.controller.js';
@@ -10,6 +11,7 @@ import { ShiftChangeController } from './controllers/shift.change.controller.js'
 import { ScheduleCronService } from './cron/schedule.cron.service.js';
 import { PatrolSchedulePolicy } from './policies/patrol.schedule.policy.service.js';
 import { PatrolScheduleRepository } from './repositories/patrol-schedule.repository.js';
+import { PatrolScheduleAssignmentRouteService } from './services/patrol-schedule-assignment-route.service.js';
 import { PatrolCheckpointService } from './services/patrol.checkpoint.service.js';
 import { PatrolRoundService } from './services/patrol.round.service.js';
 import { PatrolScheduleAssignmentService } from './services/patrol.schedule.assignment.service.js';
@@ -29,6 +31,7 @@ import { ShiftChangeService } from './services/shift.change.service.js';
     PatrolRoundController,
     PatrolCheckpointController,
     ShiftChangeController,
+    PatrolScheduleAssignmentRouteController,
   ],
 
   providers: [
@@ -45,6 +48,7 @@ import { ShiftChangeService } from './services/shift.change.service.js';
     PatrolCheckpointService,
     ScheduleCronService,
     ShiftChangeService,
+    PatrolScheduleAssignmentRouteService,
   ],
 
   exports: [
