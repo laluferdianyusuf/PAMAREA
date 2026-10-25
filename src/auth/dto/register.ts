@@ -43,6 +43,11 @@ export class RegisterDto {
   phone?: string;
 
   @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  photoUrl?: string;
+
+  @IsString()
   @MinLength(8)
   password: string;
 }

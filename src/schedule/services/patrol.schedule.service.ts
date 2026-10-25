@@ -292,48 +292,47 @@ export class PatrolScheduleService {
     };
   }
 
-  // FITUR BARU: AMBIL DATA ROSTER BULANAN UNTUK DASHBOARD ADMIN
   async getMonthlyRoster(siteId: string, month: number, year: number) {
-    // 1. Tentukan tanggal awal dan akhir bulan yang diminta
-    // Contoh jika month = 10 (Oktober), year = 2026
     const startDate = new Date(Date.UTC(year, month - 1, 1));
-    const endDate = new Date(Date.UTC(year, month, 0)); // Hari terakhir di bulan itu
+    const endDate = new Date(Date.UTC(year, month, 0));
 
-    // 2. Ambil semua penugasan (assignments) yang berjalan pada rentang bulan tersebut
     const assignments = await this.prisma.patrolScheduleAssignment.findMany({
       where: {
         schedule: {
-          siteId: siteId,
+          siteId,
         },
         status: 'ACTIVE',
-        // Logika overlap: Mulainya sebelum akhir bulan, dan Selesainya setelah awal bulan
         startDate: { lte: endDate },
         OR: [{ endDate: null }, { endDate: { gte: startDate } }],
       },
       include: {
         user: {
-          select: { id: true, fullName: true, employeeNumber: true },
+          select: {
+            id: true,
+            fullName: true,
+            employeeNumber: true,
+          },
         },
         schedule: {
-          select: { id: true, name: true },
-          // include: { dates: { where: { date: { gte: startDate, lte: endDate } } } }
+          select: {
+            id: true,
+            name: true,
+            startTime: true,
+            endTime: true,
+          },
         },
       },
-      orderBy: {
-        user: { fullName: 'asc' },
-      },
+      orderBy: [{ user: { fullName: 'asc' } }, { startDate: 'asc' }],
     });
 
-    // 3. Transformasi data menjadi bentuk Matrix (Baris: User, Kolom: Tanggal)
     const rosterMap = new Map<string, any>();
 
     for (const assign of assignments) {
       const userId = assign.user.id;
 
-      // Buat struktur dasar jika user belum ada di Map
       if (!rosterMap.has(userId)) {
         rosterMap.set(userId, {
-          userId: userId,
+          userId,
           employeeNumber: assign.user.employeeNumber,
           fullName: assign.user.fullName,
           shifts: {},
@@ -342,27 +341,59 @@ export class PatrolScheduleService {
 
       const userData = rosterMap.get(userId);
 
-      // Tentukan rentang tanggal aktual satpam ini di bulan tersebut
-      // (Bisa jadi dia cuma di-assign tgl 1 - 15, sisanya pindah shift)
+      const scheduleName = assign.schedule.name.toLowerCase();
+
+      let shiftCode: string;
+
+      if (scheduleName.includes('pagi')) {
+        shiftCode = 'P';
+      } else if (
+        scheduleName.includes('siang') ||
+        scheduleName.includes('sore')
+      ) {
+        shiftCode = 'S';
+      } else if (
+        scheduleName.includes('malam') ||
+        scheduleName.includes('overnight')
+      ) {
+        shiftCode = 'M';
+      } else {
+        shiftCode = '-';
+      }
+
       const assignStart =
         assign.startDate > startDate ? assign.startDate : startDate;
+
       const assignEnd =
         assign.endDate && assign.endDate < endDate ? assign.endDate : endDate;
 
-      // Looping hari per hari untuk mengisi kolom 'shifts'
-      let cursor = new Date(assignStart);
-      while (cursor <= assignEnd) {
-        const dateString = cursor.toISOString().split('T')[0]; // Format: '2026-10-01'
+      const cursor = new Date(
+        Date.UTC(
+          assignStart.getUTCFullYear(),
+          assignStart.getUTCMonth(),
+          assignStart.getUTCDate(),
+        ),
+      );
 
-        // Ambil huruf depan dari nama shift (Misal: "Shift Pagi" -> "P")
-        // Atau Anda bisa kembalikan nama full "Shift Pagi" sesuai kebutuhan UI
-        const shiftInitial = assign.schedule.name.charAt(0).toUpperCase();
-        // Alternatif: const shiftName = assign.schedule.name;
+      const lastDate = Date.UTC(
+        assignEnd.getUTCFullYear(),
+        assignEnd.getUTCMonth(),
+        assignEnd.getUTCDate(),
+      );
 
-        // Masukkan ke dictionary shifts
-        userData.shifts[dateString] = shiftInitial;
+      while (cursor.getTime() <= lastDate) {
+        const dateString = cursor.toISOString().slice(0, 10);
 
-        // Lanjut ke hari berikutnya
+        if (userData.shifts[dateString]) {
+          console.warn(
+            `[Roster] Assignment ganda: ${assign.user.fullName}, ` +
+              `${dateString}, shift sebelumnya=${userData.shifts[dateString]}, ` +
+              `shift baru=${shiftCode}, jadwal=${assign.schedule.name}`,
+          );
+        } else {
+          userData.shifts[dateString] = shiftCode;
+        }
+
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
     }

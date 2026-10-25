@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '../../generated/prisma/client.js';
 import { ScheduleAssignmentStatus } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import {
@@ -101,55 +102,115 @@ export class PatrolScheduleAssignmentService {
 
   // FITUR BARU: ROSTERING / ATUR SHIFT BERGILIR UNTUK 1 SATPAM
   async bulkAssignUser(dto: BulkAssignUserDto, createdById: string) {
+    if (!dto.assignments || dto.assignments.length === 0) {
+      throw new BadRequestException('Minimal harus ada satu assignment.');
+    }
+
     const user = await this.prisma.user.findFirst({
-      where: { id: dto.userId, status: 'ACTIVE', role: { name: 'SECURITY' } },
+      where: {
+        id: dto.userId,
+        status: 'ACTIVE',
+        role: {
+          name: 'SECURITY',
+        },
+      },
     });
 
     if (!user) {
-      throw new BadRequestException('User tidak valid atau bukan security');
+      throw new BadRequestException('User tidak valid atau bukan security.');
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      const createdAssignments = [];
+    return this.prisma.$transaction(
+      async (tx) => {
+        const createdAssignments = [];
 
-      for (const assign of dto.assignments) {
-        const schedule = await tx.patrolSchedule.findUnique({
-          where: { id: assign.scheduleId },
-        });
+        for (const assign of dto.assignments) {
+          //
+          const schedule = await tx.patrolSchedule.findUnique({
+            where: {
+              id: assign.scheduleId,
+            },
+          });
 
-        if (!schedule) {
-          throw new NotFoundException(
-            `Schedule dengan ID ${assign.scheduleId} tidak ditemukan`,
-          );
+          if (!schedule) {
+            throw new NotFoundException(
+              `Schedule dengan ID ${assign.scheduleId} tidak ditemukan.`,
+            );
+          }
+
+          this.policy.assertEditable(schedule.status);
+
+          if (user.siteId !== schedule.siteId) {
+            throw new BadRequestException(
+              `User tidak berada di site yang sama dengan schedule ${schedule.name}.`,
+            );
+          }
+
+          const parsedStart = this.parseDate(assign.startDate);
+
+          const parsedEnd = assign.endDate
+            ? this.parseDate(assign.endDate)
+            : null;
+
+          if (parsedEnd && parsedEnd < parsedStart) {
+            throw new BadRequestException(
+              `endDate tidak boleh lebih kecil dari startDate pada schedule ${schedule.name}.`,
+            );
+          }
+
+          const overlapping = await tx.patrolScheduleAssignment.findFirst({
+            where: {
+              scheduleId: assign.scheduleId,
+              userId: dto.userId,
+              status: ScheduleAssignmentStatus.ACTIVE,
+
+              ...(parsedEnd
+                ? {
+                    startDate: {
+                      lte: parsedEnd,
+                    },
+                  }
+                : {}),
+
+              OR: [
+                {
+                  endDate: null,
+                },
+                {
+                  endDate: {
+                    gte: parsedStart,
+                  },
+                },
+              ],
+            },
+          });
+
+          if (overlapping) {
+            throw new ConflictException(
+              `User sudah memiliki assignment yang bertabrakan pada schedule ${schedule.name}.`,
+            );
+          }
+
+          const newAssignment = await tx.patrolScheduleAssignment.create({
+            data: {
+              scheduleId: assign.scheduleId,
+              userId: dto.userId,
+              startDate: parsedStart,
+              endDate: parsedEnd,
+              status: ScheduleAssignmentStatus.ACTIVE,
+              createdById,
+            },
+          });
+
+          createdAssignments.push(newAssignment);
         }
 
-        const parsedStart = this.parseDate(assign.startDate);
-        const parsedEnd = assign.endDate
-          ? this.parseDate(assign.endDate)
-          : null;
-
-        if (parsedEnd && parsedEnd < parsedStart) {
-          throw new BadRequestException(
-            `endDate tidak boleh lebih kecil dari startDate pada schedule ${schedule.name}`,
-          );
-        }
-
-        const newAssignment = await tx.patrolScheduleAssignment.create({
-          data: {
-            scheduleId: assign.scheduleId,
-            userId: dto.userId,
-            startDate: parsedStart,
-            endDate: parsedEnd,
-            status: ScheduleAssignmentStatus.ACTIVE,
-            createdById,
-          },
-        });
-
-        createdAssignments.push(newAssignment);
-      }
-
-      return createdAssignments;
-    });
+        return createdAssignments;
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
   }
 
   async findAll(scheduleId: string) {
@@ -175,6 +236,9 @@ export class PatrolScheduleAssignmentService {
 
   async findAllAssignments() {
     return this.prisma.patrolScheduleAssignment.findMany({
+      where: {
+        status: 'ACTIVE',
+      },
       include: {
         user: true,
         schedule: {

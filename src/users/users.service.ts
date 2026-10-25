@@ -7,14 +7,19 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 
 import * as bcrypt from 'bcrypt';
+import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { UserStatus } from '../generated/prisma/enums.js';
+import { StorageService } from '../storage/storage.service.js';
 import { CreateUserDto } from './dto/create-users.dto.js';
 import { UpdateUserDto } from './dto/update-users.dto.js';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService,
+  ) {}
 
   async findAllUsers() {
     const users = await this.prisma.user.findMany({
@@ -24,6 +29,11 @@ export class UsersService {
       include: {
         role: true,
         site: true,
+        scheduleAssignments: {
+          select: {
+            id: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'desc',
@@ -182,6 +192,7 @@ export class UsersService {
           email: dto.email,
           phone: dto.phone,
           passwordHash,
+          photoUrl: dto.photoUrl ?? null,
           status: UserStatus.ACTIVE,
         },
         include: {
@@ -339,6 +350,10 @@ export class UsersService {
         ...(dto.phone !== undefined && {
           phone: dto.phone,
         }),
+
+        ...(dto.photoUrl !== undefined && {
+          photoUrl: dto.photoUrl,
+        }),
       };
 
       if (dto.password) {
@@ -371,6 +386,41 @@ export class UsersService {
       }
 
       throw new InternalServerErrorException('Gagal memperbarui user');
+    }
+  }
+
+  async changeUserPhoto(id: string, file: UploadedFile) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User tidak ditemukan');
+    }
+
+    const savedPhoto = await this.storageService.saveUserPhoto(file);
+
+    try {
+      const updatedUser = await this.prisma.user.update({
+        where: { id },
+        data: {
+          photoUrl: savedPhoto.url,
+        },
+        include: {
+          role: true,
+          site: true,
+        },
+      });
+
+      return {
+        message: 'Foto user berhasil diperbarui',
+        data: this.sanitizeUser(updatedUser),
+      };
+    } catch {
+      throw new InternalServerErrorException('Gagal memperbarui foto user');
     }
   }
 

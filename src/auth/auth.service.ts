@@ -17,9 +17,11 @@ import { RegisterDto } from './dto/register.js';
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 
+import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { generateEmployeeNumber } from '../common/utils/employee-number.util.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { UserStatus } from '../generated/prisma/enums.js';
+import { StorageService } from '../storage/storage.service.js';
 import { RefreshTokenPayload } from './interfaces/refresh-token.interface.js';
 
 @Injectable()
@@ -28,6 +30,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly storageService: StorageService,
   ) {}
 
   async register(dto: RegisterDto, createdById?: string) {
@@ -104,6 +107,8 @@ export class AuthService {
           username: dto.username,
           email: dto.email ?? null,
           phone: dto.phone ?? null,
+
+          photoUrl: dto.photoUrl ?? null,
 
           passwordHash,
 
@@ -372,6 +377,47 @@ export class AuthService {
 
       data: this.sanitizeUser(user),
     };
+  }
+
+  async changeMyPhoto(userId: string, file: UploadedFile) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        deletedAt: null,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User tidak ditemukan');
+    }
+
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('User tidak aktif');
+    }
+
+    const savedPhoto = await this.storageService.saveUserPhoto(file);
+
+    try {
+      const updatedUser = await this.prisma.user.update({
+        where: {
+          id: userId,
+        },
+        data: {
+          photoUrl: savedPhoto.url,
+        },
+        include: {
+          role: true,
+          site: true,
+        },
+      });
+
+      return {
+        message: 'Foto profil berhasil diperbarui',
+        data: this.sanitizeUser(updatedUser),
+      };
+    } catch {
+      throw new InternalServerErrorException('Gagal memperbarui foto profil');
+    }
   }
 
   private async generateTokens(userId: string, sessionId: string) {

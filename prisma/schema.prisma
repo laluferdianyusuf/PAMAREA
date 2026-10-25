@@ -242,6 +242,8 @@ model User {
 
   passwordHash String @map("password_hash")
 
+  photoUrl        String?    @map("photo_url") @db.VarChar(500)
+
   status UserStatus @default(ACTIVE)
 
   lastLoginAt DateTime? @map("last_login_at")

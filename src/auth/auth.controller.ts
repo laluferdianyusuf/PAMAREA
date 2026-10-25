@@ -1,7 +1,17 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Post,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 
 import { AuthService } from './auth.service.js';
 
+import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import type { User } from '../generated/prisma/client.js';
@@ -52,5 +62,11 @@ export class AuthController {
     userId: string,
   ) {
     return this.authService.logoutAll(userId);
+  }
+
+  @Patch('me/photo')
+  @UseInterceptors(FileInterceptor('photo'))
+  changeMyPhoto(@CurrentUser('id') userId: string, @UploadedFile() file: any) {
+    return this.authService.changeMyPhoto(userId, file);
   }
 }

@@ -4,9 +4,11 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseGuards,
 } from '@nestjs/common';
 
@@ -40,6 +42,14 @@ export class UsersController {
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.usersService.findUserById(id);
+  }
+
+  @Patch(':id/photo')
+  changeUserPhoto(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @UploadedFile() file: any,
+  ) {
+    return this.usersService.changeUserPhoto(id, file);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
