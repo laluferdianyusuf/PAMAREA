@@ -40,7 +40,7 @@ export class ShiftChangeService {
           dto.firstAssignmentId,
           dto.secondAssignmentId,
         );
-
+        this.validateAssignments(first, second, effectiveDate);
         this.validateAssignments(first, second, effectiveDate);
 
         await this.assertNoScheduleConflict(tx, first, second, effectiveDate);
