@@ -29,12 +29,14 @@ export class PatrolPointNfcService {
           throw new NotFoundException('Patrol point tidak ditemukan');
         }
 
-        if (patrolPoint.status !== 'ACTIVE') {
-          throw new ConflictException('Patrol point sedang tidak aktif');
-        }
-
         if (patrolPoint.deletedAt) {
           throw new ConflictException('Patrol point sudah dihapus');
+        }
+
+        if (patrolPoint.status !== 'INACTIVE') {
+          throw new ConflictException(
+            `Patrol point tidak dapat di-assign karena statusnya ${patrolPoint.status}. Patrol point harus INACTIVE.`,
+          );
         }
 
         const nfcTag = await tx.nfcTag.findUnique({
@@ -49,14 +51,13 @@ export class PatrolPointNfcService {
 
         if (nfcTag.status !== NfcStatus.UNASSIGNED) {
           throw new ConflictException(
-            `NFC tidak dapat di-assign karena statusnya ${nfcTag.status}`,
+            `NFC Tag tidak dapat di-assign karena statusnya ${nfcTag.status}. NFC harus UNASSIGNED.`,
           );
         }
 
         const pointAssignment = await tx.patrolPointNfc.findFirst({
           where: {
             patrolPointId: dto.patrolPointId,
-
             status: NfcAssignmentStatus.ACTIVE,
           },
         });
@@ -68,7 +69,6 @@ export class PatrolPointNfcService {
         const nfcAssignment = await tx.patrolPointNfc.findFirst({
           where: {
             nfcTagId: dto.nfcTagId,
-
             status: NfcAssignmentStatus.ACTIVE,
           },
         });
@@ -82,24 +82,27 @@ export class PatrolPointNfcService {
         const assignment = await tx.patrolPointNfc.create({
           data: {
             patrolPointId: dto.patrolPointId,
-
             nfcTagId: dto.nfcTagId,
-
             status: NfcAssignmentStatus.ACTIVE,
-
             assignedAt: new Date(),
-
-            createdById: createdById,
+            createdById,
           },
-
           include: this.assignmentInclude(),
+        });
+
+        await tx.patrolPoint.update({
+          where: {
+            id: dto.patrolPointId,
+          },
+          data: {
+            status: 'ACTIVE',
+          },
         });
 
         await tx.nfcTag.update({
           where: {
             id: dto.nfcTagId,
           },
-
           data: {
             status: NfcStatus.ACTIVE,
           },
