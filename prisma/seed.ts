@@ -1,650 +1,103 @@
+import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcrypt';
-
+import 'dotenv/config';
 import {
-  NfcAssignmentStatus,
-  NfcStatus,
-  PatrolPointStatus,
-  PhotoRequirement,
-  QuestionStatus,
-  QuestionType,
+  PrismaClient,
   RoleName,
   SiteStatus,
   UserStatus,
-} from '../src/generated/prisma/enums.js';
-import { createPrismaClient } from '../src/prisma/prisma.client.js';
+} from '../src/generated/prisma/client.js';
 
-const prisma = createPrismaClient();
+const adapter = new PrismaPg({
+  connectionString: process.env.DATABASE_URL!,
+});
+
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  console.log('Starting database seed...');
+  console.log('Memulai seeder PAMAREA...');
 
-  const adminRole = await prisma.role.upsert({
-    where: {
-      name: RoleName.ADMIN,
-    },
-    update: {},
-    create: {
-      name: RoleName.ADMIN,
-      description: 'Administrator sistem',
-    },
-  });
+  // 1. Buat seluruh role
+  const roleDefinitions = [
+    { name: RoleName.ADMIN, description: 'Administrator sistem' },
+    { name: RoleName.SECURITY, description: 'Petugas keamanan' },
+    { name: RoleName.DANRU_SECURITY, description: 'Komandan regu keamanan' },
+    { name: RoleName.CHIEF_SECURITY, description: 'Kepala keamanan' },
+  ];
 
-  const satpamRole = await prisma.role.upsert({
-    where: {
-      name: RoleName.SECURITY,
-    },
-    update: {},
-    create: {
-      name: RoleName.SECURITY,
-      description: 'Petugas keamanan / satpam',
-    },
-  });
+  const roles = new Map<RoleName, string>();
 
-  console.log('Roles created');
+  for (const definition of roleDefinitions) {
+    const role = await prisma.role.upsert({
+      where: { name: definition.name },
+      update: { description: definition.description },
+      create: definition,
+    });
 
+    roles.set(role.name, role.id);
+    console.log(`Role siap: ${role.name}`);
+  }
+
+  // 2. Buat satu site default
   const site = await prisma.site.upsert({
-    where: {
-      code: 'SITE-001',
+    where: { code: 'SITE-001' },
+    update: {
+      name: 'UP Sambelia',
+      status: SiteStatus.ACTIVE,
     },
-    update: {},
     create: {
       code: 'SITE-001',
-      name: 'Gedung Utama',
-      address: 'Jl. Contoh No. 1, Bandung, Jawa Barat',
-
-      // Contoh koordinat development.
-      // Nanti diganti koordinat lokasi sebenarnya.
-      latitude: -8.613164654410363,
-      longitude: 107.619123,
-
+      name: 'UP Sambelia',
+      address: 'Alamat site dapat diperbarui melalui admin',
       status: SiteStatus.ACTIVE,
     },
   });
 
-  console.log(`Site created: ${site.name}`);
+  console.log(`Site siap: ${site.name} (${site.id})`);
 
-  const adminPassword = await bcrypt.hash('Admin123!', 12);
+  // 3. Buat satu akun admin
+  const username = process.env.SEED_ADMIN_USERNAME ?? 'admin';
+  const password = process.env.SEED_ADMIN_PASSWORD;
+
+  if (!password || password.length < 8) {
+    throw new Error('SEED_ADMIN_PASSWORD wajib diisi dan minimal 12 karakter.');
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  const adminRoleId = roles.get(RoleName.ADMIN);
+
+  if (!adminRoleId) {
+    throw new Error('Role ADMIN tidak ditemukan.');
+  }
 
   const admin = await prisma.user.upsert({
-    where: {
-      username: 'admin',
-    },
+    where: { username },
     update: {
-      fullName: 'Administrator',
-      roleId: adminRole.id,
+      roleId: adminRoleId,
       siteId: site.id,
+      fullName: 'Administrator PAMAREA',
+      passwordHash,
       status: UserStatus.ACTIVE,
+      deletedAt: null,
     },
     create: {
-      roleId: adminRole.id,
+      roleId: adminRoleId,
       siteId: site.id,
-
-      employeeNumber: 'ADM001',
-      fullName: 'Administrator',
-
-      username: 'admin',
-      email: 'admin@patrol.local',
-      phone: '081234567890',
-
-      passwordHash: adminPassword,
-
+      fullName: 'Administrator PAMAREA',
+      username,
+      passwordHash,
       status: UserStatus.ACTIVE,
     },
   });
 
-  console.log(`Admin created: ${admin.username}`);
-
-  const satpamPassword = await bcrypt.hash('Satpam123!', 12);
-
-  const satpam1 = await prisma.user.upsert({
-    where: {
-      username: 'satpam001',
-    },
-    update: {
-      fullName: 'Budi Santoso',
-      roleId: satpamRole.id,
-      siteId: site.id,
-      status: UserStatus.ACTIVE,
-    },
-    create: {
-      roleId: satpamRole.id,
-      siteId: site.id,
-
-      employeeNumber: 'SP001',
-      fullName: 'Budi Santoso',
-
-      username: 'satpam001',
-      email: 'satpam001@patrol.local',
-      phone: '081111111111',
-
-      passwordHash: satpamPassword,
-
-      status: UserStatus.ACTIVE,
-    },
-  });
-
-  const satpam2 = await prisma.user.upsert({
-    where: {
-      username: 'satpam002',
-    },
-    update: {
-      fullName: 'Andi Wijaya',
-      roleId: satpamRole.id,
-      siteId: site.id,
-      status: UserStatus.ACTIVE,
-    },
-    create: {
-      roleId: satpamRole.id,
-      siteId: site.id,
-
-      employeeNumber: 'SP002',
-      fullName: 'Andi Wijaya',
-
-      username: 'satpam002',
-      email: 'satpam002@patrol.local',
-      phone: '082222222222',
-
-      passwordHash: satpamPassword,
-
-      status: UserStatus.ACTIVE,
-    },
-  });
-
-  console.log('Satpam created');
-
-  const point1 = await prisma.patrolPoint.upsert({
-    where: {
-      siteId_code: {
-        siteId: site.id,
-        code: 'P001',
-      },
-    },
-    update: {},
-    create: {
-      siteId: site.id,
-      code: 'P001',
-      name: 'Pintu Utama',
-      description: 'Pintu masuk utama gedung',
-
-      latitude: -8.613164654410363,
-      longitude: 116.115630323912,
-
-      radiusMeters: 30,
-
-      status: PatrolPointStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const point2 = await prisma.patrolPoint.upsert({
-    where: {
-      siteId_code: {
-        siteId: site.id,
-        code: 'P002',
-      },
-    },
-    update: {},
-    create: {
-      siteId: site.id,
-      code: 'P002',
-      name: 'Area Parkir',
-      description: 'Area parkir kendaraan',
-
-      latitude: -8.613164654410363,
-      longitude: 116.115630323912,
-
-      radiusMeters: 30,
-
-      status: PatrolPointStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const point3 = await prisma.patrolPoint.upsert({
-    where: {
-      siteId_code: {
-        siteId: site.id,
-        code: 'P003',
-      },
-    },
-    update: {},
-    create: {
-      siteId: site.id,
-      code: 'P003',
-      name: 'Lobby',
-      description: 'Area lobby utama',
-
-      latitude: -8.613164654410363,
-      longitude: 116.115630323912,
-
-      radiusMeters: 30,
-
-      status: PatrolPointStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const point4 = await prisma.patrolPoint.upsert({
-    where: {
-      siteId_code: {
-        siteId: site.id,
-        code: 'P004',
-      },
-    },
-    update: {},
-    create: {
-      siteId: site.id,
-      code: 'P004',
-      name: 'Lantai 2',
-      description: 'Koridor lantai 2',
-
-      latitude: -8.613164654410363,
-      longitude: 116.115630323912,
-
-      radiusMeters: 30,
-
-      status: PatrolPointStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const point5 = await prisma.patrolPoint.upsert({
-    where: {
-      siteId_code: {
-        siteId: site.id,
-        code: 'P005',
-      },
-    },
-    update: {},
-    create: {
-      siteId: site.id,
-      code: 'P005',
-      name: 'Area Belakang',
-      description: 'Area belakang gedung',
-
-      latitude: -8.613164654410363,
-      longitude: 116.115630323912,
-
-      radiusMeters: 30,
-
-      status: PatrolPointStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  console.log('Patrol points created');
-
-  const nfc1 = await prisma.nfcTag.upsert({
-    where: {
-      uid: '04A1B2C3D401',
-    },
-    update: {},
-    create: {
-      uid: '04A1B2C3D401',
-      label: 'NFC Pintu Utama',
-      status: NfcStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const nfc2 = await prisma.nfcTag.upsert({
-    where: {
-      uid: '04A1B2C3D402',
-    },
-    update: {},
-    create: {
-      uid: '04A1B2C3D402',
-      label: 'NFC Area Parkir',
-      status: NfcStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const nfc3 = await prisma.nfcTag.upsert({
-    where: {
-      uid: '04A1B2C3D403',
-    },
-    update: {},
-    create: {
-      uid: '04A1B2C3D403',
-      label: 'NFC Lobby',
-      status: NfcStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const nfc4 = await prisma.nfcTag.upsert({
-    where: {
-      uid: '04A1B2C3D404',
-    },
-    update: {},
-    create: {
-      uid: '04A1B2C3D404',
-      label: 'NFC Lantai 2',
-      status: NfcStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  const nfc5 = await prisma.nfcTag.upsert({
-    where: {
-      uid: '04A1B2C3D405',
-    },
-    update: {},
-    create: {
-      uid: '04A1B2C3D405',
-      label: 'NFC Area Belakang',
-      status: NfcStatus.ACTIVE,
-      createdById: admin.id,
-    },
-  });
-
-  console.log('NFC tags created');
-
-  await prisma.patrolPointNfc.createMany({
-    data: [
-      {
-        patrolPointId: point1.id,
-        nfcTagId: nfc1.id,
-
-        assignedAt: new Date(),
-        status: NfcAssignmentStatus.ACTIVE,
-
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point2.id,
-        nfcTagId: nfc2.id,
-
-        assignedAt: new Date(),
-        status: NfcAssignmentStatus.ACTIVE,
-
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point3.id,
-        nfcTagId: nfc3.id,
-
-        assignedAt: new Date(),
-        status: NfcAssignmentStatus.ACTIVE,
-
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point4.id,
-        nfcTagId: nfc4.id,
-
-        assignedAt: new Date(),
-        status: NfcAssignmentStatus.ACTIVE,
-
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point5.id,
-        nfcTagId: nfc5.id,
-
-        assignedAt: new Date(),
-        status: NfcAssignmentStatus.ACTIVE,
-
-        createdById: admin.id,
-      },
-    ],
-    skipDuplicates: true,
-  });
-
-  console.log('NFC assignments created');
-
-  const today = new Date();
-
-  const startDate = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  );
-
-  const endDate = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate() + 30,
-  );
-
-  const q1 = await prisma.question.create({
-    data: {
-      code: 'Q-DOOR-01',
-      questionText: 'Apakah pintu utama dalam kondisi terkunci dengan baik?',
-      questionType: QuestionType.YES_NO,
-
-      isRequired: true,
-      photoRequirement: PhotoRequirement.NONE,
-
-      status: QuestionStatus.ACTIVE,
-
-      createdById: admin.id,
-    },
-  });
-
-  const q2 = await prisma.question.create({
-    data: {
-      code: 'Q-PARK-01',
-      questionText: 'Apakah area parkir dalam kondisi aman?',
-      questionType: QuestionType.YES_NO,
-
-      isRequired: true,
-      photoRequirement: PhotoRequirement.CONDITIONAL,
-
-      status: QuestionStatus.ACTIVE,
-
-      createdById: admin.id,
-    },
-  });
-
-  const q3 = await prisma.question.create({
-    data: {
-      code: 'Q-LOBBY-01',
-      questionText: 'Apakah kondisi lobby bersih dan aman?',
-      questionType: QuestionType.YES_NO,
-
-      isRequired: true,
-      photoRequirement: PhotoRequirement.NONE,
-
-      status: QuestionStatus.ACTIVE,
-
-      createdById: admin.id,
-    },
-  });
-
-  const q4 = await prisma.question.create({
-    data: {
-      code: 'Q-GUARD-01',
-      questionText: 'Apakah terdapat aktivitas mencurigakan?',
-      questionType: QuestionType.YES_NO,
-
-      isRequired: true,
-      photoRequirement: PhotoRequirement.CONDITIONAL,
-
-      status: QuestionStatus.ACTIVE,
-
-      createdById: admin.id,
-    },
-  });
-
-  const q5 = await prisma.question.create({
-    data: {
-      code: 'Q-NOTE-01',
-      questionText: 'Catatan tambahan kondisi lokasi',
-      questionType: QuestionType.TEXT,
-
-      isRequired: false,
-      photoRequirement: PhotoRequirement.NONE,
-
-      status: QuestionStatus.ACTIVE,
-
-      createdById: admin.id,
-    },
-  });
-
-  console.log('Questions created');
-
-  await prisma.questionOption.createMany({
-    data: [
-      {
-        questionId: q1.id,
-        value: 'YES',
-        label: 'Ya',
-        sortOrder: 1,
-      },
-      {
-        questionId: q1.id,
-        value: 'NO',
-        label: 'Tidak',
-        sortOrder: 2,
-      },
-
-      {
-        questionId: q2.id,
-        value: 'YES',
-        label: 'Ya',
-        sortOrder: 1,
-      },
-      {
-        questionId: q2.id,
-        value: 'NO',
-        label: 'Tidak',
-        sortOrder: 2,
-      },
-
-      {
-        questionId: q3.id,
-        value: 'YES',
-        label: 'Ya',
-        sortOrder: 1,
-      },
-      {
-        questionId: q3.id,
-        value: 'NO',
-        label: 'Tidak',
-        sortOrder: 2,
-      },
-
-      {
-        questionId: q4.id,
-        value: 'YES',
-        label: 'Ya',
-        sortOrder: 1,
-      },
-      {
-        questionId: q4.id,
-        value: 'NO',
-        label: 'Tidak',
-        sortOrder: 2,
-      },
-    ],
-    skipDuplicates: true,
-  });
-
-  console.log('Question options created');
-
-  await prisma.pointQuestion.createMany({
-    data: [
-      // Pintu Utama
-      {
-        patrolPointId: point1.id,
-        questionId: q1.id,
-        sortOrder: 1,
-        isRequired: true,
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point1.id,
-        questionId: q4.id,
-        sortOrder: 2,
-        isRequired: true,
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point1.id,
-        questionId: q5.id,
-        sortOrder: 3,
-        isRequired: false,
-        createdById: admin.id,
-      },
-
-      // Area Parkir
-      {
-        patrolPointId: point2.id,
-        questionId: q2.id,
-        sortOrder: 1,
-        isRequired: true,
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point2.id,
-        questionId: q4.id,
-        sortOrder: 2,
-        isRequired: true,
-        createdById: admin.id,
-      },
-
-      // Lobby
-      {
-        patrolPointId: point3.id,
-        questionId: q3.id,
-        sortOrder: 1,
-        isRequired: true,
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point3.id,
-        questionId: q4.id,
-        sortOrder: 2,
-        isRequired: true,
-        createdById: admin.id,
-      },
-
-      // Lantai 2
-      {
-        patrolPointId: point4.id,
-        questionId: q4.id,
-        sortOrder: 1,
-        isRequired: true,
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point4.id,
-        questionId: q5.id,
-        sortOrder: 2,
-        isRequired: false,
-        createdById: admin.id,
-      },
-
-      // Area Belakang
-      {
-        patrolPointId: point5.id,
-        questionId: q4.id,
-        sortOrder: 1,
-        isRequired: true,
-        createdById: admin.id,
-      },
-      {
-        patrolPointId: point5.id,
-        questionId: q5.id,
-        sortOrder: 2,
-        isRequired: false,
-        createdById: admin.id,
-      },
-    ],
-    skipDuplicates: true,
-  });
-
-  console.log('Point questions created');
+  console.log(`Admin siap: ${admin.username}`);
+  console.log('Seeder PAMAREA berhasil.');
 }
 
 main()
   .catch((error) => {
-    console.error('Seed failed');
-    console.error(error);
-
-    process.exit(1);
+    console.error('Seeder gagal:', error);
+    process.exitCode = 1;
   })
   .finally(async () => {
     await prisma.$disconnect();

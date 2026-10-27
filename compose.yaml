@@ -29,7 +29,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 2026
-      DATABASE_URL: postgresql://pamarea_user:${POSTGRES_PASSWORD_URLENCODED}@db:5432/pamarea
+      DATABASE_URL: postgresql://pamarea_user:${POSTGRES_PASSWORD}@db:5432/pamarea
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-key.json
     volumes:
       - ./firebase-key.json:/run/secrets/firebase-key.json:ro
