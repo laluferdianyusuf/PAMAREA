@@ -60,7 +60,7 @@ async function main() {
   const password = process.env.SEED_ADMIN_PASSWORD;
 
   if (!password || password.length < 8) {
-    throw new Error('SEED_ADMIN_PASSWORD wajib diisi dan minimal 12 karakter.');
+    throw new Error('SEED_ADMIN_PASSWORD wajib diisi dan minimal 8 karakter.');
   }
 
   const passwordHash = await bcrypt.hash(password, 12);

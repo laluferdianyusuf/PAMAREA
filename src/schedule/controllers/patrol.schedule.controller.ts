@@ -17,7 +17,6 @@ import { RolesGuard } from '../../common/guards/roles.guard.js';
 import type { User } from '../../generated/prisma/client.js';
 import { RoleName } from '../../generated/prisma/enums.js';
 import { AddAssignmentDto } from '../dto/add.assignment.dto.js';
-import { AddPointDto } from '../dto/add.point.dto.js';
 import { CreatePatrolScheduleDto } from '../dto/create.schedule.dto.js';
 import { ExtendDatesDto } from '../dto/entend.dates.dto.js';
 import { ScheduleFilterDto } from '../dto/schedule.filter.dto.js';
@@ -125,22 +124,5 @@ export class PatrolScheduleController {
     @Body() dto: UpdateAssignmentDto,
   ) {
     return this.service.updateAssignment(assignmentId, dto.endDate, dto.status);
-  }
-
-  /**
-   * POST /patrol-schedules/:id/points
-   * Menambahkan area/titik baru ke jadwal dengan menyisipkan checkpoint
-   */
-  @Post(':id/points')
-  async addPoint(@Param('id') scheduleId: string, @Body() dto: AddPointDto) {
-    // Default required ke true jika tidak dikirim dari client
-    const isRequired = dto.required ?? true;
-
-    return this.service.addPoint(
-      scheduleId,
-      dto.patrolPointId,
-      dto.insertAtSequence,
-      isRequired,
-    );
   }
 }

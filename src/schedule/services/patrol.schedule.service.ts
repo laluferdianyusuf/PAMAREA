@@ -32,9 +32,11 @@ export class PatrolScheduleService {
   async create(dto: CreatePatrolScheduleDto, createdById: string) {
     this.validateTimeRange(dto.startTime, dto.endTime);
 
+    const points = dto.points ?? [];
     const dates = dto.dates ?? [];
     const assignments = dto.assignments ?? [];
-    const pointIds = dto.points.map((point) => point.patrolPointId);
+
+    const pointIds = points.map((point) => point.patrolPointId);
     const uniquePointIds = [...new Set(pointIds)];
 
     if (uniquePointIds.length !== pointIds.length) {
@@ -48,38 +50,59 @@ export class PatrolScheduleService {
       throw new ConflictException('User assignment tidak boleh duplikat');
     }
 
-    if (dto.dates && dto.dates.length > 0) {
-      this.validateDates(dto.dates);
+    if (dates.length > 0) {
+      this.validateDates(dates);
     }
 
     if (assignments.length > 0) {
       this.validateAssignments({
         ...dto,
+        points,
+        dates,
         assignments,
       } as CreatePatrolScheduleDto);
 
+      for (const assignment of assignments) {
+        const startDate = this.parseDateOnly(assignment.startDate);
+        const endDate = assignment.endDate
+          ? this.parseDateOnly(assignment.endDate)
+          : null;
+
+        if (endDate && endDate < startDate) {
+          throw new BadRequestException(
+            `Tanggal selesai assignment tidak boleh sebelum tanggal mulai: ${assignment.userId}`,
+          );
+        }
+      }
+    }
+
+    if (uniqueUserIds.length > 0) {
       const users = await this.prisma.user.findMany({
         where: {
           id: { in: uniqueUserIds },
           status: UserStatus.ACTIVE,
-          role: { name: RoleName.SECURITY },
+          role: {
+            name: RoleName.SECURITY,
+          },
         },
         select: {
           id: true,
           fullName: true,
           role: {
-            select: { name: true },
+            select: {
+              name: true,
+            },
           },
         },
       });
 
       if (users.length !== uniqueUserIds.length) {
         const foundIds = new Set(users.map((user) => user.id));
-        const invalidUsers = uniqueUserIds.filter((id) => !foundIds.has(id));
+        const invalidUserIds = uniqueUserIds.filter((id) => !foundIds.has(id));
 
         throw new BadRequestException({
           message: 'Beberapa user assignment tidak valid',
-          invalidUserIds: invalidUsers,
+          invalidUserIds,
         });
       }
     }
@@ -91,6 +114,9 @@ export class PatrolScheduleService {
             id: dto.siteId,
             status: 'ACTIVE',
           },
+          select: {
+            id: true,
+          },
         });
 
         if (!site) {
@@ -100,7 +126,9 @@ export class PatrolScheduleService {
         const existingSchedules = await tx.patrolSchedule.findMany({
           where: {
             siteId: dto.siteId,
-            status: { not: ScheduleStatus.ARCHIVED },
+            status: {
+              not: ScheduleStatus.ARCHIVED,
+            },
           },
           select: {
             id: true,
@@ -152,30 +180,32 @@ export class PatrolScheduleService {
           });
         }
 
-        const patrolPoints = await tx.patrolPoint.findMany({
-          where: {
-            id: { in: uniquePointIds },
-            siteId: dto.siteId,
-            status: PatrolPointStatus.ACTIVE,
-          },
-          select: {
-            id: true,
-            code: true,
-            name: true,
-            siteId: true,
-          },
-        });
-
-        if (patrolPoints.length !== uniquePointIds.length) {
-          const foundIds = new Set(patrolPoints.map((point) => point.id));
-          const invalidPoints = uniquePointIds.filter(
-            (id) => !foundIds.has(id),
-          );
-
-          throw new BadRequestException({
-            message: 'Beberapa patrol point tidak valid',
-            invalidPointIds: invalidPoints,
+        if (uniquePointIds.length > 0) {
+          const patrolPoints = await tx.patrolPoint.findMany({
+            where: {
+              id: {
+                in: uniquePointIds,
+              },
+              siteId: dto.siteId,
+              status: PatrolPointStatus.ACTIVE,
+            },
+            select: {
+              id: true,
+            },
           });
+
+          if (patrolPoints.length !== uniquePointIds.length) {
+            const foundIds = new Set(patrolPoints.map((point) => point.id));
+
+            const invalidPointIds = uniquePointIds.filter(
+              (id) => !foundIds.has(id),
+            );
+
+            throw new BadRequestException({
+              message: 'Beberapa patrol point tidak valid',
+              invalidPointIds,
+            });
+          }
         }
 
         const schedule = await tx.patrolSchedule.create({
@@ -192,14 +222,16 @@ export class PatrolScheduleService {
           },
         });
 
-        await tx.patrolSchedulePoint.createMany({
-          data: dto.points.map((point, index) => ({
-            scheduleId: schedule.id,
-            patrolPointId: point.patrolPointId,
-            sequence: index + 1,
-            required: point.required ?? true,
-          })),
-        });
+        if (points.length > 0) {
+          await tx.patrolSchedulePoint.createMany({
+            data: points.map((point, index) => ({
+              scheduleId: schedule.id,
+              patrolPointId: point.patrolPointId,
+              sequence: index + 1,
+              required: point.required ?? true,
+            })),
+          });
+        }
 
         if (dates.length > 0) {
           await tx.patrolScheduleDate.createMany({
@@ -227,16 +259,24 @@ export class PatrolScheduleService {
           });
         }
 
-        return tx.patrolSchedule.findUnique({
-          where: { id: schedule.id },
+        return tx.patrolSchedule.findUniqueOrThrow({
+          where: {
+            id: schedule.id,
+          },
           include: {
             site: true,
             points: {
-              orderBy: { sequence: 'asc' },
-              include: { patrolPoint: true },
+              orderBy: {
+                sequence: 'asc',
+              },
+              include: {
+                patrolPoint: true,
+              },
             },
             dates: {
-              orderBy: { date: 'asc' },
+              orderBy: {
+                date: 'asc',
+              },
             },
             assignments: {
               include: {
@@ -249,7 +289,9 @@ export class PatrolScheduleService {
                   },
                 },
               },
-              orderBy: { startDate: 'asc' },
+              orderBy: {
+                startDate: 'asc',
+              },
             },
           },
         });
@@ -512,46 +554,48 @@ export class PatrolScheduleService {
     );
   }
 
-  async activate(id: string) {
-    const schedule = await this.prisma.patrolSchedule.findUnique({
-      where: { id },
-      include: {
-        points: true,
-        dates: true,
-        assignments: true,
-      },
-    });
-
-    if (!schedule) {
-      throw new NotFoundException('Patrol schedule not found');
-    }
-
-    this.policy.assertCanActivate(
-      schedule.status,
-      schedule.points.length,
-      schedule.dates.length,
-      schedule.assignments.length,
-    );
-
-    const updatedSchedule = await this.prisma.patrolSchedule.update({
-      where: { id },
-      data: { status: 'ACTIVE' },
-    });
-
-    const scheduledDates = schedule.dates
-      .filter((item) => item.status === 'SCHEDULED')
-      .map((item) => new Date(item.date).toISOString().split('T')[0])
-      .sort();
-
-    if (scheduledDates.length > 0) {
-      await this.generationService.generate(id, {
-        startDate: scheduledDates[0],
-        endDate: scheduledDates[scheduledDates.length - 1],
-        force: false,
+  async activate(scheduleId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.patrolSchedule.findUnique({
+        where: { id: scheduleId },
+        include: {
+          points: true,
+        },
       });
-    }
 
-    return updatedSchedule;
+      if (!schedule) {
+        throw new NotFoundException('Schedule tidak ditemukan');
+      }
+
+      if (schedule.status !== ScheduleStatus.DRAFT) {
+        throw new BadRequestException(
+          'Hanya schedule DRAFT yang bisa diaktifkan',
+        );
+      }
+
+      if (schedule.points.length === 0) {
+        throw new BadRequestException(
+          'Tambahkan minimal satu patrol point sebelum mengaktifkan schedule',
+        );
+      }
+
+      return tx.patrolSchedule.update({
+        where: { id: scheduleId },
+        data: {
+          status: ScheduleStatus.ACTIVE,
+        },
+        include: {
+          site: true,
+          points: {
+            orderBy: { sequence: 'asc' },
+            include: { patrolPoint: true },
+          },
+          dates: {
+            orderBy: { date: 'asc' },
+          },
+        },
+      });
+    });
   }
 
   async archive(id: string) {
@@ -717,74 +761,6 @@ export class PatrolScheduleService {
         ...(status !== undefined && { status }),
       },
     });
-  }
-
-  async addPoint(
-    scheduleId: string,
-    patrolPointId: string,
-    insertAtSequence: number,
-    required = true,
-  ) {
-    const result = await this.prisma.$transaction(async (tx) => {
-      const schedule = await tx.patrolSchedule.findUnique({
-        where: { id: scheduleId },
-        include: { points: true },
-      });
-
-      if (!schedule) {
-        throw new NotFoundException('Schedule tidak ditemukan');
-      }
-
-      const point = await tx.patrolPoint.findFirst({
-        where: {
-          id: patrolPointId,
-          siteId: schedule.siteId,
-          status: 'ACTIVE',
-        },
-      });
-
-      if (!point) {
-        throw new BadRequestException(
-          'Patrol point tidak valid atau berbeda Site',
-        );
-      }
-
-      const alreadyExists = schedule.points.some(
-        (item) => item.patrolPointId === patrolPointId,
-      );
-
-      if (alreadyExists) {
-        throw new ConflictException('Point sudah ada di schedule ini');
-      }
-
-      await tx.patrolSchedulePoint.updateMany({
-        where: {
-          scheduleId,
-          sequence: { gte: insertAtSequence },
-        },
-        data: {
-          sequence: { increment: 1 },
-        },
-      });
-
-      return tx.patrolSchedulePoint.create({
-        data: {
-          scheduleId,
-          patrolPointId,
-          sequence: insertAtSequence,
-          required,
-        },
-      });
-    });
-
-    const today = new Date().toISOString().split('T')[0];
-
-    await this.generationService.generate(scheduleId, {
-      startDate: today,
-      endDate: today,
-    });
-
-    return result;
   }
 
   private validateTimeRange(startTime: string, endTime: string) {

@@ -3,21 +3,24 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
+
 import { Prisma } from '../../generated/prisma/client.js';
 import { ScheduleAssignmentStatus } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
+
 import {
   BulkAssignUserDto,
   CreateScheduleAssignmentDto,
 } from '../dto/create.schedule.assignment.dto.js';
-import { PatrolSchedulePolicy } from '../policies/patrol.schedule.policy.service.js';
+import { ScheduleGenerationService } from './schedule.generation.service.js';
 
 @Injectable()
 export class PatrolScheduleAssignmentService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly policy: PatrolSchedulePolicy,
+    private readonly generationService: ScheduleGenerationService,
   ) {}
 
   async create(
@@ -27,13 +30,16 @@ export class PatrolScheduleAssignmentService {
   ) {
     const schedule = await this.prisma.patrolSchedule.findUnique({
       where: { id: scheduleId },
+      include: {
+        points: true,
+      },
     });
 
     if (!schedule) {
       throw new NotFoundException('Schedule not found');
     }
 
-    this.policy.assertEditable(schedule.status);
+    this.assertScheduleReady(schedule);
 
     const user = await this.prisma.user.findUnique({
       where: {
@@ -62,11 +68,15 @@ export class PatrolScheduleAssignmentService {
 
     const startDate = this.parseDate(dto.startDate);
 
-    const endDate = dto.endDate ? this.parseDate(dto.endDate) : null;
-
-    if (endDate && endDate < startDate) {
-      throw new BadRequestException('End date cannot be before start date');
+    if (!dto.endDate) {
+      throw new BadRequestException(
+        'End date is required for automatic patrol generation',
+      );
     }
+
+    const endDate = this.parseDate(dto.endDate);
+
+    this.assertValidDateRange(startDate, endDate);
 
     const overlapping = await this.findOverlappingAssignment(
       scheduleId,
@@ -79,12 +89,13 @@ export class PatrolScheduleAssignmentService {
       throw new ConflictException('User already has overlapping assignment');
     }
 
-    return this.prisma.patrolScheduleAssignment.create({
+    const assignment = await this.prisma.patrolScheduleAssignment.create({
       data: {
         scheduleId,
         userId: dto.userId,
         startDate,
         endDate,
+        status: ScheduleAssignmentStatus.ACTIVE,
         createdById,
       },
       include: {
@@ -98,37 +109,46 @@ export class PatrolScheduleAssignmentService {
         },
       },
     });
+
+    await this.generateForAssignment(scheduleId, startDate, endDate);
+
+    return assignment;
   }
 
-  // FITUR BARU: ROSTERING / ATUR SHIFT BERGILIR UNTUK 1 SATPAM
   async bulkAssignUser(dto: BulkAssignUserDto, createdById: string) {
     if (!dto.assignments || dto.assignments.length === 0) {
       throw new BadRequestException('Minimal harus ada satu assignment.');
     }
 
-    const user = await this.prisma.user.findFirst({
+    const user = await this.prisma.user.findUnique({
       where: {
         id: dto.userId,
-        status: 'ACTIVE',
-        role: {
-          name: 'SECURITY',
-        },
+      },
+      include: {
+        role: true,
       },
     });
 
-    if (!user) {
+    if (!user || user.status !== 'ACTIVE' || user.role.name !== 'SECURITY') {
       throw new BadRequestException('User tidak valid atau bukan security.');
     }
 
-    return this.prisma.$transaction(
+    const createdAssignments = await this.prisma.$transaction(
       async (tx) => {
-        const createdAssignments = [];
+        const results: Array<{
+          id: string;
+          scheduleId: string;
+          startDate: Date;
+          endDate: Date | null;
+        }> = [];
 
         for (const assign of dto.assignments) {
-          //
           const schedule = await tx.patrolSchedule.findUnique({
             where: {
               id: assign.scheduleId,
+            },
+            include: {
+              points: true,
             },
           });
 
@@ -138,7 +158,7 @@ export class PatrolScheduleAssignmentService {
             );
           }
 
-          this.policy.assertEditable(schedule.status);
+          this.assertScheduleReady(schedule);
 
           if (user.siteId !== schedule.siteId) {
             throw new BadRequestException(
@@ -146,17 +166,17 @@ export class PatrolScheduleAssignmentService {
             );
           }
 
-          const parsedStart = this.parseDate(assign.startDate);
+          const startDate = this.parseDate(assign.startDate);
 
-          const parsedEnd = assign.endDate
-            ? this.parseDate(assign.endDate)
-            : null;
-
-          if (parsedEnd && parsedEnd < parsedStart) {
+          if (!assign.endDate) {
             throw new BadRequestException(
-              `endDate tidak boleh lebih kecil dari startDate pada schedule ${schedule.name}.`,
+              `End date wajib diisi pada schedule ${schedule.name}.`,
             );
           }
+
+          const endDate = this.parseDate(assign.endDate);
+
+          this.assertValidDateRange(startDate, endDate);
 
           const overlapping = await tx.patrolScheduleAssignment.findFirst({
             where: {
@@ -164,13 +184,9 @@ export class PatrolScheduleAssignmentService {
               userId: dto.userId,
               status: ScheduleAssignmentStatus.ACTIVE,
 
-              ...(parsedEnd
-                ? {
-                    startDate: {
-                      lte: parsedEnd,
-                    },
-                  }
-                : {}),
+              startDate: {
+                lte: endDate,
+              },
 
               OR: [
                 {
@@ -178,7 +194,7 @@ export class PatrolScheduleAssignmentService {
                 },
                 {
                   endDate: {
-                    gte: parsedStart,
+                    gte: startDate,
                   },
                 },
               ],
@@ -195,22 +211,76 @@ export class PatrolScheduleAssignmentService {
             data: {
               scheduleId: assign.scheduleId,
               userId: dto.userId,
-              startDate: parsedStart,
-              endDate: parsedEnd,
+              startDate,
+              endDate,
               status: ScheduleAssignmentStatus.ACTIVE,
               createdById,
             },
           });
 
-          createdAssignments.push(newAssignment);
+          results.push({
+            id: newAssignment.id,
+            scheduleId: newAssignment.scheduleId,
+            startDate: newAssignment.startDate,
+            endDate: newAssignment.endDate,
+          });
         }
 
-        return createdAssignments;
+        return results;
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       },
     );
+
+    const generationResults: Array<{
+      assignmentId: string;
+      scheduleId: string;
+      status: 'SUCCESS' | 'FAILED';
+      message?: string;
+    }> = [];
+
+    for (const assignment of createdAssignments) {
+      if (!assignment.endDate) {
+        generationResults.push({
+          assignmentId: assignment.id,
+          scheduleId: assignment.scheduleId,
+          status: 'FAILED',
+          message: 'Assignment tidak memiliki endDate.',
+        });
+
+        continue;
+      }
+
+      try {
+        await this.generateForAssignment(
+          assignment.scheduleId,
+          assignment.startDate,
+          assignment.endDate,
+        );
+
+        generationResults.push({
+          assignmentId: assignment.id,
+          scheduleId: assignment.scheduleId,
+          status: 'SUCCESS',
+        });
+      } catch (error) {
+        generationResults.push({
+          assignmentId: assignment.id,
+          scheduleId: assignment.scheduleId,
+          status: 'FAILED',
+          message:
+            error instanceof Error ? error.message : 'Patrol generation failed',
+        });
+      }
+    }
+
+    return {
+      message: 'Bulk assignment selesai diproses.',
+      assignmentsCreated: createdAssignments.length,
+      assignments: createdAssignments,
+      generationResults,
+    };
   }
 
   async findAll(scheduleId: string) {
@@ -237,7 +307,7 @@ export class PatrolScheduleAssignmentService {
   async findAllAssignments() {
     return this.prisma.patrolScheduleAssignment.findMany({
       where: {
-        status: 'ACTIVE',
+        status: ScheduleAssignmentStatus.ACTIVE,
       },
       include: {
         user: true,
@@ -293,6 +363,41 @@ export class PatrolScheduleAssignmentService {
     };
   }
 
+  private assertScheduleReady(schedule: { status: string; points: unknown[] }) {
+    if (schedule.status !== 'ACTIVE') {
+      throw new BadRequestException(
+        'Shift harus berstatus ACTIVE sebelum satpam di-assign.',
+      );
+    }
+
+    if (!schedule.points || schedule.points.length === 0) {
+      throw new BadRequestException(
+        'Shift belum memiliki titik patroli. Tambahkan points sebelum assignment.',
+      );
+    }
+  }
+
+  private async generateForAssignment(
+    scheduleId: string,
+    startDate: Date,
+    endDate: Date,
+  ) {
+    try {
+      return await this.generationService.generate(scheduleId, {
+        startDate: this.formatDate(startDate),
+        endDate: this.formatDate(endDate),
+        force: false,
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error ? error.message : 'Unknown generation error';
+
+      throw new ServiceUnavailableException(
+        `Assignment sudah tersimpan, tetapi generate patroli gagal. Jangan membuat assignment ulang. Coba ulangi proses generate. Detail: ${detail}`,
+      );
+    }
+  }
+
   private async findOverlappingAssignment(
     scheduleId: string,
     userId: string,
@@ -303,10 +408,10 @@ export class PatrolScheduleAssignmentService {
       where: {
         scheduleId,
         userId,
-        status: 'ACTIVE',
+        status: ScheduleAssignmentStatus.ACTIVE,
 
         startDate: {
-          lte: endDate ?? new Date('9999-12-31'),
+          lte: endDate ?? new Date('9999-12-31T00:00:00.000Z'),
         },
 
         OR: [
@@ -323,13 +428,32 @@ export class PatrolScheduleAssignmentService {
     });
   }
 
-  private parseDate(value: string) {
+  private assertValidDateRange(startDate: Date, endDate: Date) {
+    if (endDate < startDate) {
+      throw new BadRequestException('End date cannot be before start date');
+    }
+  }
+
+  private parseDate(value: string): Date {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw new BadRequestException(
+        `Invalid date format: ${value}. Use YYYY-MM-DD.`,
+      );
+    }
+
     const date = new Date(`${value}T00:00:00.000Z`);
 
-    if (Number.isNaN(date.getTime())) {
+    if (
+      Number.isNaN(date.getTime()) ||
+      date.toISOString().slice(0, 10) !== value
+    ) {
       throw new BadRequestException(`Invalid date: ${value}`);
     }
 
     return date;
+  }
+
+  private formatDate(date: Date): string {
+    return date.toISOString().slice(0, 10);
   }
 }

@@ -11,12 +11,14 @@ import {
 } from '../dto/create.schedule.point.dto.js';
 import { UpdateSchedulePointDto } from '../dto/update.schedule.point.dto.js';
 import { PatrolSchedulePolicy } from '../policies/patrol.schedule.policy.service.js';
+import { ScheduleGenerationService } from './schedule.generation.service.js';
 
 @Injectable()
 export class PatrolSchedulePointService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly policy: PatrolSchedulePolicy,
+    private readonly generationService: ScheduleGenerationService,
   ) {}
 
   async add(scheduleId: string, dto: CreateSchedulePointDto) {
@@ -73,155 +75,219 @@ export class PatrolSchedulePointService {
   }
 
   async addMany(scheduleId: string, dto: CreateManySchedulePointsDto) {
-    const schedule = await this.prisma.patrolSchedule.findUnique({
-      where: {
-        id: scheduleId,
-      },
-    });
-
-    if (!schedule) {
-      throw new NotFoundException('Schedule not found');
+    if (!dto.patrolPointIds?.length) {
+      throw new BadRequestException('Pilih minimal satu patrol point');
     }
 
-    this.policy.assertDraft(schedule.status);
+    const uniquePointIds = [...new Set(dto.patrolPointIds)];
 
-    // Remove duplicate point IDs
-    const patrolPointIds = [...new Set(dto.patrolPointIds)];
-
-    // Get all patrol points
-    const patrolPoints = await this.prisma.patrolPoint.findMany({
-      where: {
-        id: {
-          in: patrolPointIds,
-        },
-      },
-      select: {
-        id: true,
-        siteId: true,
-        code: true,
-        name: true,
-        status: true,
-      },
-    });
-
-    // Check whether all points exist
-    const foundIds = new Set(patrolPoints.map((point) => point.id));
-
-    const missingIds = patrolPointIds.filter((id) => !foundIds.has(id));
-
-    if (missingIds.length > 0) {
-      throw new NotFoundException(
-        `Some patrol points were not found: ${missingIds.join(', ')}`,
-      );
-    }
-
-    // Make sure every point belongs
-    // to the same site as the schedule
-    const invalidSitePoints = patrolPoints.filter(
-      (point) => point.siteId !== schedule.siteId,
-    );
-
-    if (invalidSitePoints.length > 0) {
-      throw new BadRequestException(
-        `Some patrol points do not belong to schedule site`,
-      );
-    }
-
-    // Optional: only ACTIVE patrol points
-    const inactivePoints = patrolPoints.filter(
-      (point) => point.status !== 'ACTIVE',
-    );
-
-    if (inactivePoints.length > 0) {
-      throw new BadRequestException(`Some patrol points are not active`);
-    }
-
-    // Check existing schedule points
-    const existingPoints = await this.prisma.patrolSchedulePoint.findMany({
-      where: {
-        scheduleId,
-
-        patrolPointId: {
-          in: patrolPointIds,
-        },
-      },
-      select: {
-        patrolPointId: true,
-      },
-    });
-
-    const existingIds = new Set(
-      existingPoints.map((point) => point.patrolPointId),
-    );
-
-    const newPointIds = patrolPointIds.filter((id) => !existingIds.has(id));
-
-    if (newPointIds.length === 0) {
+    if (uniquePointIds.length !== dto.patrolPointIds.length) {
       throw new ConflictException(
-        'All selected patrol points already exist in this schedule',
+        'Patrol point tidak boleh duplikat dalam request',
       );
     }
 
-    // Get current maximum sequence
-    const lastPoint = await this.prisma.patrolSchedulePoint.findFirst({
-      where: {
-        scheduleId,
-      },
-      orderBy: {
-        sequence: 'desc',
-      },
-      select: {
-        sequence: true,
-      },
-    });
+    return this.prisma.$transaction(
+      async (tx) => {
+        const schedule = await tx.patrolSchedule.findUnique({
+          where: { id: scheduleId },
+          select: {
+            id: true,
+            siteId: true,
+            status: true,
+          },
+        });
 
-    const startingSequence = (lastPoint?.sequence ?? 0) + 1;
+        if (!schedule) {
+          throw new NotFoundException('Schedule not found');
+        }
 
-    // Create everything atomically
-    const result = await this.prisma.$transaction(async (tx) => {
-      await tx.patrolSchedulePoint.createMany({
-        data: newPointIds.map((patrolPointId, index) => ({
-          scheduleId,
-          patrolPointId,
+        this.policy.assertDraft(schedule.status);
 
-          sequence: startingSequence + index,
+        const patrolPoints = await tx.patrolPoint.findMany({
+          where: {
+            id: { in: uniquePointIds },
+          },
+          select: {
+            id: true,
+            siteId: true,
+            code: true,
+            name: true,
+            status: true,
+          },
+        });
 
-          required: dto.required ?? true,
-        })),
-      });
+        const foundIds = new Set(patrolPoints.map((point) => point.id));
 
-      return tx.patrolSchedulePoint.findMany({
-        where: {
-          scheduleId,
-        },
-        include: {
-          patrolPoint: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
-              latitude: true,
-              longitude: true,
-              radiusMeters: true,
-              status: true,
+        const missingIds = uniquePointIds.filter((id) => !foundIds.has(id));
+
+        if (missingIds.length > 0) {
+          throw new NotFoundException({
+            message: 'Some patrol points were not found',
+            invalidPointIds: missingIds,
+          });
+        }
+
+        const invalidSitePoints = patrolPoints.filter(
+          (point) => point.siteId !== schedule.siteId,
+        );
+
+        if (invalidSitePoints.length > 0) {
+          throw new BadRequestException({
+            message: 'Some patrol points belong to another site',
+            invalidPointIds: invalidSitePoints.map((point) => point.id),
+          });
+        }
+
+        const inactivePoints = patrolPoints.filter(
+          (point) => point.status !== 'ACTIVE',
+        );
+
+        if (inactivePoints.length > 0) {
+          throw new BadRequestException({
+            message: 'Some patrol points are inactive',
+            invalidPointIds: inactivePoints.map((point) => point.id),
+          });
+        }
+
+        // Cari point yang sudah terpasang pada schedule.
+        const existingPoints = await tx.patrolSchedulePoint.findMany({
+          where: {
+            scheduleId,
+            patrolPointId: { in: uniquePointIds },
+          },
+          select: {
+            patrolPointId: true,
+          },
+        });
+
+        const existingIds = new Set(
+          existingPoints.map((point) => point.patrolPointId),
+        );
+
+        const newPointIds = uniquePointIds.filter((id) => !existingIds.has(id));
+
+        if (newPointIds.length === 0) {
+          throw new ConflictException(
+            'All selected patrol points already exist in this schedule',
+          );
+        }
+
+        // Ambil sequence tertinggi agar titik baru ditambahkan di akhir.
+        const lastPoint = await tx.patrolSchedulePoint.findFirst({
+          where: { scheduleId },
+          orderBy: { sequence: 'desc' },
+          select: { sequence: true },
+        });
+
+        const startingSequence = (lastPoint?.sequence ?? 0) + 1;
+
+        await tx.patrolSchedulePoint.createMany({
+          data: newPointIds.map((patrolPointId, index) => ({
+            scheduleId,
+            patrolPointId,
+            sequence: startingSequence + index,
+            required: dto.required ?? true,
+          })),
+        });
+
+        const result = await tx.patrolSchedulePoint.findMany({
+          where: { scheduleId },
+          include: {
+            patrolPoint: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                latitude: true,
+                longitude: true,
+                radiusMeters: true,
+                status: true,
+              },
             },
           },
+          orderBy: { sequence: 'asc' },
+        });
+
+        return {
+          message: 'Patrol points added successfully',
+          addedCount: newPointIds.length,
+          skippedCount: existingIds.size,
+          data: result,
+        };
+      },
+      {
+        isolationLevel: 'Serializable',
+      },
+    );
+  }
+
+  async addPoint(
+    scheduleId: string,
+    patrolPointId: string,
+    insertAtSequence: number,
+    required = true,
+  ) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.patrolSchedule.findUnique({
+        where: { id: scheduleId },
+        include: { points: true },
+      });
+
+      if (!schedule) {
+        throw new NotFoundException('Schedule tidak ditemukan');
+      }
+
+      const point = await tx.patrolPoint.findFirst({
+        where: {
+          id: patrolPointId,
+          siteId: schedule.siteId,
+          status: 'ACTIVE',
         },
-        orderBy: {
-          sequence: 'asc',
+      });
+
+      if (!point) {
+        throw new BadRequestException(
+          'Patrol point tidak valid atau berbeda Site',
+        );
+      }
+
+      const alreadyExists = schedule.points.some(
+        (item) => item.patrolPointId === patrolPointId,
+      );
+
+      if (alreadyExists) {
+        throw new ConflictException('Point sudah ada di schedule ini');
+      }
+
+      await tx.patrolSchedulePoint.updateMany({
+        where: {
+          scheduleId,
+          sequence: { gte: insertAtSequence },
+        },
+        data: {
+          sequence: { increment: 1 },
+        },
+      });
+
+      return tx.patrolSchedulePoint.create({
+        data: {
+          scheduleId,
+          patrolPointId,
+          sequence: insertAtSequence,
+          required,
         },
       });
     });
 
-    return {
-      message: 'Patrol points added successfully',
+    const today = new Date().toISOString().split('T')[0];
 
-      addedCount: newPointIds.length,
+    await this.generationService.generate(scheduleId, {
+      startDate: today,
+      endDate: today,
+    });
 
-      skippedCount: existingIds.size,
-
-      data: result,
-    };
+    return result;
   }
 
   async findAll(scheduleId: string) {

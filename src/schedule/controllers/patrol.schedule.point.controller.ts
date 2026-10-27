@@ -12,6 +12,7 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { RoleName } from '../../generated/prisma/enums.js';
+import { AddPointDto } from '../dto/add.point.dto.js';
 import {
   CreateManySchedulePointsDto,
   CreateSchedulePointDto,
@@ -19,12 +20,12 @@ import {
 import { UpdateSchedulePointDto } from '../dto/update.schedule.point.dto.js';
 import { PatrolSchedulePointService } from '../services/patrol.schedule.point.service.js';
 
-@Controller('patrol-schedules/:scheduleId/points')
+@Controller('patrol-schedules-points')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PatrolSchedulePointController {
   constructor(private readonly service: PatrolSchedulePointService) {}
 
-  @Post()
+  @Post(':scheduleId')
   @Roles(RoleName.ADMIN)
   add(
     @Param('scheduleId')
@@ -35,7 +36,7 @@ export class PatrolSchedulePointController {
     return this.service.add(scheduleId, dto);
   }
 
-  @Post('/many')
+  @Post(':scheduleId/many')
   @Roles(RoleName.ADMIN)
   addMany(
     @Param('scheduleId')
@@ -47,7 +48,22 @@ export class PatrolSchedulePointController {
     return this.service.addMany(scheduleId, dto);
   }
 
-  @Get()
+  @Post(':scheduleId/new-point')
+  async addPoint(
+    @Param('scheduleId') scheduleId: string,
+    @Body() dto: AddPointDto,
+  ) {
+    const isRequired = dto.required ?? true;
+
+    return this.service.addPoint(
+      scheduleId,
+      dto.patrolPointId,
+      dto.insertAtSequence,
+      isRequired,
+    );
+  }
+
+  @Get(':scheduleId')
   @Roles(RoleName.ADMIN)
   findAll(
     @Param('scheduleId')
@@ -56,7 +72,7 @@ export class PatrolSchedulePointController {
     return this.service.findAll(scheduleId);
   }
 
-  @Patch(':pointId')
+  @Patch(':scheduleId/:pointId')
   @Roles(RoleName.ADMIN)
   update(
     @Param('scheduleId')
@@ -69,7 +85,7 @@ export class PatrolSchedulePointController {
     return this.service.update(scheduleId, pointId, dto);
   }
 
-  @Delete(':pointId')
+  @Delete(':scheduleId/:pointId')
   @Roles(RoleName.ADMIN)
   remove(
     @Param('scheduleId')

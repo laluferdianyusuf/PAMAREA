@@ -62,11 +62,12 @@ export class CreatePatrolScheduleDto {
   @IsBoolean()
   enforceSequence?: boolean;
 
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => SchedulePointInput)
-  points: SchedulePointInput[];
+  points?: SchedulePointInput[];
 
   @IsArray()
   @ArrayMinSize(1)
