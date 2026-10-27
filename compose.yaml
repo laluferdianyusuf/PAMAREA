@@ -1,0 +1,49 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pamarea
+      POSTGRES_USER: pamarea_user
+      POSTGRES_PASSWORD: Pamarea_Sambelie301026
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U pamarea_user -d pamarea
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - pamarea_network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 2026
+      DATABASE_URL: postgresql://pamarea_user:Pamarea_Sambelie301026@db:5432/pamarea
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-key.json
+    volumes:
+      - ./firebase-key.json:/run/secrets/firebase-key.json:ro
+    ports:
+      - "127.0.0.1:2026:2026"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - pamarea_network
+
+volumes:
+  postgres_data:
+
+networks:
+  pamarea_network:
+    driver: bridge

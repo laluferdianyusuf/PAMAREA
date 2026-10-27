@@ -2,19 +2,36 @@ import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
-import { cert, initializeApp } from 'firebase-admin/app';
-import { createRequire } from 'node:module';
+import { applicationDefault, cert, initializeApp } from 'firebase-admin/app';
+import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AppModule } from './app.module.js';
 
-const require = createRequire(import.meta.url);
+function initializeFirebase() {
+  const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 
-async function bootstrap() {
-  const serviceAccount = require('../firebase-key.json');
+  if (credentialsPath) {
+    initializeApp({
+      credential: applicationDefault(),
+    });
+
+    console.log('Firebase initialized using application default credentials.');
+    return;
+  }
+
+  const localCredentialsPath = resolve(process.cwd(), 'firebase-key.json');
+
+  const serviceAccount = JSON.parse(readFileSync(localCredentialsPath, 'utf8'));
 
   initializeApp({
     credential: cert(serviceAccount),
   });
+
+  console.log('Firebase initialized using local credentials.');
+}
+
+async function bootstrap() {
+  initializeFirebase();
 
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
@@ -28,7 +45,6 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
-  // CORS
   app.enableCors({
     origin: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
