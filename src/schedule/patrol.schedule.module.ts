@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuditLogModule } from '../audit/audit.module.js';
 import { PatrolScheduleAssignmentRouteController } from './controllers/patrol-schedule-assignment-route.controller.js';
 import { PatrolCheckpointController } from './controllers/patrol.checkpoint.controller.js';
 import { PatrolRoundController } from './controllers/patrol.round.controller.js';
@@ -22,6 +23,7 @@ import { ScheduleGenerationService } from './services/schedule.generation.servic
 import { ShiftChangeService } from './services/shift.change.service.js';
 
 @Module({
+  imports: [AuditLogModule],
   controllers: [
     PatrolScheduleController,
     PatrolSchedulePointController,

@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
 import { PatrolAssignmentModule } from './assignments/assignments.module.js';
+import { AuditLogModule } from './audit/audit.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
 import { EmergencyModule } from './emergency/emergency.module.js';
@@ -28,6 +29,8 @@ import { UsersModule } from './users/users.module.js';
     }),
     ScheduleModule.forRoot(),
     PrismaModule,
+
+    AuditLogModule,
     AuthModule,
 
     UsersModule,

@@ -4,17 +4,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
-import { PrismaService } from '../prisma/prisma.service.js';
-
+import { AuditLogService } from '../audit/audit.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { NfcAssignmentStatus, NfcStatus } from '../generated/prisma/enums.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { AssignNfcDto } from './dto/assign-nfc.dto.js';
 import { RemoveNfcAssignmentDto } from './dto/remove-nfc-assignment.dto.js';
 import { ReplaceNfcAssignmentDto } from './dto/replace-nfc-assignment.dto.js';
 
 @Injectable()
 export class PatrolPointNfcService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async assign(dto: AssignNfcDto, createdById: string) {
     return this.prisma.$transaction(
@@ -90,7 +93,7 @@ export class PatrolPointNfcService {
           include: this.assignmentInclude(),
         });
 
-        await tx.patrolPoint.update({
+        const updatedPatrolPoint = await tx.patrolPoint.update({
           where: {
             id: dto.patrolPointId,
           },
@@ -99,12 +102,35 @@ export class PatrolPointNfcService {
           },
         });
 
-        await tx.nfcTag.update({
+        const updatedNfcTag = await tx.nfcTag.update({
           where: {
             id: dto.nfcTagId,
           },
           data: {
             status: NfcStatus.ACTIVE,
+          },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: createdById,
+          action: 'ASSIGN_NFC_TO_PATROL_POINT',
+          entityType: 'PatrolPointNfc',
+          entityId: assignment.id,
+          oldData: {
+            patrolPointId: patrolPoint.id,
+            patrolPointStatus: patrolPoint.status,
+            nfcTagId: nfcTag.id,
+            nfcTagUid: nfcTag.uid,
+            nfcTagStatus: nfcTag.status,
+          },
+          newData: {
+            assignmentId: assignment.id,
+            patrolPointId: updatedPatrolPoint.id,
+            patrolPointStatus: updatedPatrolPoint.status,
+            nfcTagId: updatedNfcTag.id,
+            nfcTagUid: updatedNfcTag.uid,
+            nfcTagStatus: updatedNfcTag.status,
+            assignmentStatus: assignment.status,
           },
         });
 
@@ -120,16 +146,12 @@ export class PatrolPointNfcService {
     return this.prisma.patrolPointNfc.findMany({
       where: {
         ...(patrolPointId ? { patrolPointId } : {}),
-
         ...(nfcTagId ? { nfcTagId } : {}),
-
         status: NfcAssignmentStatus.ACTIVE,
       },
-
       orderBy: {
         assignedAt: 'desc',
       },
-
       include: this.assignmentInclude(),
     });
   }
@@ -138,14 +160,11 @@ export class PatrolPointNfcService {
     return this.prisma.patrolPointNfc.findMany({
       where: {
         ...(patrolPointId ? { patrolPointId } : {}),
-
         ...(nfcTagId ? { nfcTagId } : {}),
       },
-
       orderBy: {
         assignedAt: 'desc',
       },
-
       include: this.assignmentInclude(),
     });
   }
@@ -155,7 +174,6 @@ export class PatrolPointNfcService {
       where: {
         id,
       },
-
       include: this.assignmentInclude(),
     });
 
@@ -170,10 +188,8 @@ export class PatrolPointNfcService {
     return this.prisma.patrolPointNfc.findFirst({
       where: {
         patrolPointId,
-
         status: NfcAssignmentStatus.ACTIVE,
       },
-
       include: {
         nfcTag: {
           select: {
@@ -183,7 +199,6 @@ export class PatrolPointNfcService {
             status: true,
           },
         },
-
         patrolPoint: {
           select: {
             id: true,
@@ -203,10 +218,8 @@ export class PatrolPointNfcService {
     return this.prisma.patrolPointNfc.findFirst({
       where: {
         nfcTagId,
-
         status: NfcAssignmentStatus.ACTIVE,
       },
-
       include: {
         nfcTag: {
           select: {
@@ -216,7 +229,6 @@ export class PatrolPointNfcService {
             status: true,
           },
         },
-
         patrolPoint: {
           select: {
             id: true,
@@ -233,7 +245,7 @@ export class PatrolPointNfcService {
     });
   }
 
-  async remove(id: string, dto: RemoveNfcAssignmentDto) {
+  async remove(id: string, dto: RemoveNfcAssignmentDto, actorId: string) {
     return this.prisma.$transaction(
       async (tx) => {
         const assignment = await tx.patrolPointNfc.findUnique({
@@ -250,29 +262,56 @@ export class PatrolPointNfcService {
           throw new ConflictException('Assignment sudah tidak aktif');
         }
 
+        const nfcTag = await tx.nfcTag.findUnique({
+          where: {
+            id: assignment.nfcTagId,
+          },
+        });
+
+        if (!nfcTag) {
+          throw new NotFoundException('NFC Tag tidak ditemukan');
+        }
+
         const updated = await tx.patrolPointNfc.update({
           where: {
             id,
           },
-
           data: {
             status: NfcAssignmentStatus.REMOVED,
-
             unassignedAt: new Date(),
-
             reason: dto.reason?.trim() || 'Assignment removed',
           },
-
           include: this.assignmentInclude(),
         });
 
-        await tx.nfcTag.update({
+        const updatedNfcTag = await tx.nfcTag.update({
           where: {
             id: assignment.nfcTagId,
           },
-
           data: {
             status: NfcStatus.UNASSIGNED,
+          },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'REMOVE_NFC_ASSIGNMENT',
+          entityType: 'PatrolPointNfc',
+          entityId: assignment.id,
+          oldData: {
+            patrolPointId: assignment.patrolPointId,
+            nfcTagId: assignment.nfcTagId,
+            nfcTagUid: nfcTag.uid,
+            assignmentStatus: assignment.status,
+            nfcTagStatus: nfcTag.status,
+          },
+          newData: {
+            patrolPointId: updated.patrolPointId,
+            nfcTagId: updated.nfcTagId,
+            nfcTagUid: nfcTag.uid,
+            assignmentStatus: updated.status,
+            nfcTagStatus: updatedNfcTag.status,
+            reason: updated.reason,
           },
         });
 
@@ -284,7 +323,11 @@ export class PatrolPointNfcService {
     );
   }
 
-  async replace(assignmentId: string, dto: ReplaceNfcAssignmentDto) {
+  async replace(
+    assignmentId: string,
+    dto: ReplaceNfcAssignmentDto,
+    actorId: string,
+  ) {
     return this.prisma.$transaction(
       async (tx) => {
         const oldAssignment = await tx.patrolPointNfc.findUnique({
@@ -305,6 +348,16 @@ export class PatrolPointNfcService {
           throw new ConflictException(
             'NFC baru tidak boleh sama dengan NFC lama',
           );
+        }
+
+        const oldNfc = await tx.nfcTag.findUnique({
+          where: {
+            id: oldAssignment.nfcTagId,
+          },
+        });
+
+        if (!oldNfc) {
+          throw new NotFoundException('NFC lama tidak ditemukan');
         }
 
         const newNfc = await tx.nfcTag.findUnique({
@@ -337,25 +390,21 @@ export class PatrolPointNfcService {
           throw new ConflictException('Patrol point sedang tidak aktif');
         }
 
-        await tx.patrolPointNfc.update({
+        const replacedAssignment = await tx.patrolPointNfc.update({
           where: {
             id: oldAssignment.id,
           },
-
           data: {
             status: NfcAssignmentStatus.REPLACED,
-
             unassignedAt: new Date(),
-
             reason: dto.reason?.trim() || 'NFC replaced',
           },
         });
 
-        await tx.nfcTag.update({
+        const replacedNfc = await tx.nfcTag.update({
           where: {
             id: oldAssignment.nfcTagId,
           },
-
           data: {
             status: NfcStatus.REPLACED,
           },
@@ -364,28 +413,50 @@ export class PatrolPointNfcService {
         const newAssignment = await tx.patrolPointNfc.create({
           data: {
             patrolPointId: oldAssignment.patrolPointId,
-
             nfcTagId: dto.newNfcTagId,
-
             assignedAt: new Date(),
-
             status: NfcAssignmentStatus.ACTIVE,
-
             reason: dto.reason?.trim() || 'NFC replacement',
-
             createdById: oldAssignment.createdById,
           },
-
           include: this.assignmentInclude(),
         });
 
-        await tx.nfcTag.update({
+        const activatedNfc = await tx.nfcTag.update({
           where: {
             id: dto.newNfcTagId,
           },
-
           data: {
             status: NfcStatus.ACTIVE,
+          },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'REPLACE_NFC_ASSIGNMENT',
+          entityType: 'PatrolPointNfc',
+          entityId: oldAssignment.id,
+          oldData: {
+            assignmentId: oldAssignment.id,
+            patrolPointId: oldAssignment.patrolPointId,
+            nfcTagId: oldNfc.id,
+            nfcTagUid: oldNfc.uid,
+            assignmentStatus: oldAssignment.status,
+            nfcTagStatus: oldNfc.status,
+          },
+          newData: {
+            oldAssignmentId: replacedAssignment.id,
+            oldAssignmentStatus: replacedAssignment.status,
+            oldNfcId: replacedNfc.id,
+            oldNfcUid: replacedNfc.uid,
+            oldNfcStatus: replacedNfc.status,
+            newAssignmentId: newAssignment.id,
+            newAssignmentStatus: newAssignment.status,
+            newNfcId: activatedNfc.id,
+            newNfcUid: activatedNfc.uid,
+            newNfcStatus: activatedNfc.status,
+            patrolPointId: patrolPoint.id,
+            reason: dto.reason?.trim() || 'NFC replacement',
           },
         });
 
@@ -401,19 +472,15 @@ export class PatrolPointNfcService {
     const assignment = await this.prisma.patrolPointNfc.findFirst({
       where: {
         nfcTagId,
-
         status: NfcAssignmentStatus.ACTIVE,
-
         nfcTag: {
           status: NfcStatus.ACTIVE,
         },
-
         patrolPoint: {
           status: 'ACTIVE',
           deletedAt: null,
         },
       },
-
       include: {
         nfcTag: {
           select: {
@@ -423,7 +490,6 @@ export class PatrolPointNfcService {
             status: true,
           },
         },
-
         patrolPoint: {
           select: {
             id: true,
@@ -466,7 +532,6 @@ export class PatrolPointNfcService {
           status: true,
         },
       },
-
       nfcTag: {
         select: {
           id: true,
@@ -475,7 +540,6 @@ export class PatrolPointNfcService {
           status: true,
         },
       },
-
       createdBy: {
         select: {
           id: true,

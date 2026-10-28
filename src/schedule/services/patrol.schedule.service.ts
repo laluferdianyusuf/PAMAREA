@@ -4,14 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditLogService } from '../../audit/audit.service.js';
 import {
   PatrolPointStatus,
+  Prisma,
   RoleName,
   ScheduleAssignmentStatus,
   ScheduleDateStatus,
   ScheduleStatus,
   UserStatus,
-} from '../../generated/prisma/enums.js';
+} from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { CreatePatrolScheduleDto } from '../dto/create.schedule.dto.js';
 import { ScheduleFilterDto } from '../dto/schedule.filter.dto.js';
@@ -20,6 +22,8 @@ import { PatrolSchedulePolicy } from '../policies/patrol.schedule.policy.service
 import { PatrolScheduleRepository } from '../repositories/patrol-schedule.repository.js';
 import { ScheduleGenerationService } from './schedule.generation.service.js';
 
+type Tx = Prisma.TransactionClient;
+
 @Injectable()
 export class PatrolScheduleService {
   constructor(
@@ -27,6 +31,7 @@ export class PatrolScheduleService {
     private readonly repository: PatrolScheduleRepository,
     private readonly policy: PatrolSchedulePolicy,
     private readonly generationService: ScheduleGenerationService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(dto: CreatePatrolScheduleDto, createdById: string) {
@@ -52,6 +57,10 @@ export class PatrolScheduleService {
 
     if (dates.length > 0) {
       this.validateDates(dates);
+
+      for (const date of dates) {
+        this.parseDateOnly(date);
+      }
     }
 
     if (assignments.length > 0) {
@@ -259,7 +268,7 @@ export class PatrolScheduleService {
           });
         }
 
-        return tx.patrolSchedule.findUniqueOrThrow({
+        const result = await tx.patrolSchedule.findUniqueOrThrow({
           where: {
             id: schedule.id,
           },
@@ -295,9 +304,35 @@ export class PatrolScheduleService {
             },
           },
         });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: createdById,
+          action: 'CREATE',
+          entityType: 'PatrolSchedule',
+          entityId: schedule.id,
+          newData: {
+            siteId: schedule.siteId,
+            name: schedule.name,
+            startTime: schedule.startTime,
+            endTime: schedule.endTime,
+            intervalMinutes: schedule.intervalMinutes,
+            gracePeriodMinutes: schedule.gracePeriodMinutes,
+            enforceSequence: schedule.enforceSequence,
+            status: schedule.status,
+            patrolPointIds: uniquePointIds,
+            dates,
+            assignments: assignments.map((assignment) => ({
+              userId: assignment.userId,
+              startDate: assignment.startDate,
+              endDate: assignment.endDate ?? null,
+            })),
+          },
+        });
+
+        return result;
       },
       {
-        isolationLevel: 'Serializable',
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       },
     );
   }
@@ -367,7 +402,7 @@ export class PatrolScheduleService {
     const assignments = await this.prisma.patrolScheduleAssignment.findMany({
       where: {
         schedule: { siteId },
-        status: 'ACTIVE',
+        status: ScheduleAssignmentStatus.ACTIVE,
         startDate: { lte: endDate },
         OR: [{ endDate: null }, { endDate: { gte: startDate } }],
       },
@@ -466,7 +501,7 @@ export class PatrolScheduleService {
     return Array.from(rosterMap.values());
   }
 
-  async update(id: string, dto: UpdatePatrolScheduleDto) {
+  async update(id: string, dto: UpdatePatrolScheduleDto, adminId: string) {
     const schedule = await this.repository.findBasicById(id);
 
     if (!schedule) {
@@ -524,7 +559,7 @@ export class PatrolScheduleService {
           });
         }
 
-        return tx.patrolSchedule.update({
+        const updated = await tx.patrolSchedule.update({
           where: { id },
           data: {
             ...(dto.name !== undefined && {
@@ -547,14 +582,41 @@ export class PatrolScheduleService {
             }),
           },
         });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: adminId,
+          action: 'UPDATE',
+          entityType: 'PatrolSchedule',
+          entityId: id,
+          oldData: {
+            name: schedule.name,
+            startTime: schedule.startTime,
+            endTime: schedule.endTime,
+            intervalMinutes: schedule.intervalMinutes,
+            gracePeriodMinutes: schedule.gracePeriodMinutes,
+            enforceSequence: schedule.enforceSequence,
+            status: schedule.status,
+          },
+          newData: {
+            name: updated.name,
+            startTime: updated.startTime,
+            endTime: updated.endTime,
+            intervalMinutes: updated.intervalMinutes,
+            gracePeriodMinutes: updated.gracePeriodMinutes,
+            enforceSequence: updated.enforceSequence,
+            status: updated.status,
+          },
+        });
+
+        return updated;
       },
       {
-        isolationLevel: 'Serializable',
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
       },
     );
   }
 
-  async activate(scheduleId: string) {
+  async activate(scheduleId: string, adminId: string) {
     return this.prisma.$transaction(async (tx) => {
       const schedule = await tx.patrolSchedule.findUnique({
         where: { id: scheduleId },
@@ -579,7 +641,7 @@ export class PatrolScheduleService {
         );
       }
 
-      return tx.patrolSchedule.update({
+      const updated = await tx.patrolSchedule.update({
         where: { id: scheduleId },
         data: {
           status: ScheduleStatus.ACTIVE,
@@ -595,44 +657,101 @@ export class PatrolScheduleService {
           },
         },
       });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: adminId,
+        action: 'ACTIVATE',
+        entityType: 'PatrolSchedule',
+        entityId: scheduleId,
+        oldData: {
+          status: schedule.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async archive(id: string) {
-    const schedule = await this.repository.findBasicById(id);
+  async archive(id: string, adminId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.patrolSchedule.findUnique({
+        where: { id },
+      });
 
-    if (!schedule) {
-      throw new NotFoundException('Patrol schedule not found');
-    }
+      if (!schedule) {
+        throw new NotFoundException('Patrol schedule not found');
+      }
 
-    if (schedule.status === 'ARCHIVED') {
-      return schedule;
-    }
+      if (schedule.status === ScheduleStatus.ARCHIVED) {
+        return schedule;
+      }
 
-    return this.prisma.patrolSchedule.update({
-      where: { id },
-      data: { status: 'ARCHIVED' },
+      const updated = await tx.patrolSchedule.update({
+        where: { id },
+        data: {
+          status: ScheduleStatus.ARCHIVED,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: adminId,
+        action: 'ARCHIVE',
+        entityType: 'PatrolSchedule',
+        entityId: id,
+        oldData: {
+          status: schedule.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async remove(id: string) {
-    const schedule = await this.repository.findBasicById(id);
+  async remove(id: string, adminId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.patrolSchedule.findUnique({
+        where: { id },
+      });
 
-    if (!schedule) {
-      throw new NotFoundException('Patrol schedule not found');
-    }
+      if (!schedule) {
+        throw new NotFoundException('Patrol schedule not found');
+      }
 
-    if (schedule.status !== 'DRAFT') {
-      throw new ConflictException('Only DRAFT schedule can be deleted');
-    }
+      if (schedule.status !== ScheduleStatus.DRAFT) {
+        throw new ConflictException('Only DRAFT schedule can be deleted');
+      }
 
-    await this.prisma.patrolSchedule.delete({
-      where: { id },
+      await this.auditLogService.createAudit(tx, {
+        userId: adminId,
+        action: 'DELETE',
+        entityType: 'PatrolSchedule',
+        entityId: id,
+        oldData: {
+          siteId: schedule.siteId,
+          name: schedule.name,
+          startTime: schedule.startTime,
+          endTime: schedule.endTime,
+          intervalMinutes: schedule.intervalMinutes,
+          gracePeriodMinutes: schedule.gracePeriodMinutes,
+          enforceSequence: schedule.enforceSequence,
+          status: schedule.status,
+        },
+      });
+
+      await tx.patrolSchedule.delete({
+        where: { id },
+      });
+
+      return {
+        message: 'Schedule deleted successfully',
+      };
     });
-
-    return {
-      message: 'Schedule deleted successfully',
-    };
   }
 
   async extendDates(
@@ -640,27 +759,67 @@ export class PatrolScheduleService {
     newDates: string[],
     createdById: string,
   ) {
-    const schedule = await this.prisma.patrolSchedule.findUnique({
-      where: { id: scheduleId },
-    });
-
-    if (!schedule) {
-      throw new NotFoundException('Patrol schedule not found');
-    }
-
     this.validateDates(newDates);
 
-    await this.prisma.patrolScheduleDate.createMany({
-      data: newDates.map((date) => ({
-        scheduleId: schedule.id,
-        date: this.parseDateOnly(date),
-        status: ScheduleDateStatus.SCHEDULED,
-        createdById,
-      })),
-      skipDuplicates: true,
-    });
+    for (const date of newDates) {
+      this.parseDateOnly(date);
+    }
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().slice(0, 10);
+
+    await this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.patrolSchedule.findUnique({
+        where: { id: scheduleId },
+      });
+
+      if (!schedule) {
+        throw new NotFoundException('Patrol schedule not found');
+      }
+
+      const existingDates = await tx.patrolScheduleDate.findMany({
+        where: {
+          scheduleId,
+          date: {
+            in: newDates.map((date) => this.parseDateOnly(date)),
+          },
+        },
+        select: {
+          date: true,
+        },
+      });
+
+      const existingDateKeys = new Set(
+        existingDates.map((item) => this.formatDate(item.date)),
+      );
+
+      const datesToCreate = newDates.filter(
+        (date) => !existingDateKeys.has(date),
+      );
+
+      if (datesToCreate.length === 0) {
+        return;
+      }
+
+      await tx.patrolScheduleDate.createMany({
+        data: datesToCreate.map((date) => ({
+          scheduleId: schedule.id,
+          date: this.parseDateOnly(date),
+          status: ScheduleDateStatus.SCHEDULED,
+          createdById,
+        })),
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: createdById,
+        action: 'EXTEND_DATES',
+        entityType: 'PatrolSchedule',
+        entityId: scheduleId,
+        newData: {
+          addedDates: datesToCreate,
+          insertedCount: datesToCreate.length,
+        },
+      });
+    });
 
     if (newDates.includes(today)) {
       await this.generationService.generate(scheduleId, {
@@ -692,8 +851,8 @@ export class PatrolScheduleService {
     const user = await this.prisma.user.findFirst({
       where: {
         id: userId,
-        status: 'ACTIVE',
-        role: { name: 'SECURITY' },
+        status: UserStatus.ACTIVE,
+        role: { name: RoleName.SECURITY },
       },
     });
 
@@ -710,18 +869,36 @@ export class PatrolScheduleService {
       );
     }
 
-    const assignment = await this.prisma.patrolScheduleAssignment.create({
-      data: {
-        scheduleId,
-        userId,
-        startDate: parsedStart,
-        endDate: parsedEnd,
-        status: ScheduleAssignmentStatus.ACTIVE,
-        createdById,
-      },
+    const assignment = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.patrolScheduleAssignment.create({
+        data: {
+          scheduleId,
+          userId,
+          startDate: parsedStart,
+          endDate: parsedEnd,
+          status: ScheduleAssignmentStatus.ACTIVE,
+          createdById,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: createdById,
+        action: 'ASSIGN',
+        entityType: 'PatrolScheduleAssignment',
+        entityId: created.id,
+        newData: {
+          scheduleId,
+          userId,
+          startDate,
+          endDate,
+          status: created.status,
+        },
+      });
+
+      return created;
     });
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = new Date().toISOString().slice(0, 10);
 
     if (startDate <= today && (!endDate || endDate >= today)) {
       await this.generationService.generate(scheduleId, {
@@ -735,6 +912,7 @@ export class PatrolScheduleService {
 
   async updateAssignment(
     assignmentId: string,
+    adminId: string,
     endDate?: string | null,
     status?: ScheduleAssignmentStatus,
   ) {
@@ -746,7 +924,12 @@ export class PatrolScheduleService {
       throw new NotFoundException('Assignment tidak ditemukan');
     }
 
-    const parsedEnd = endDate ? this.parseDateOnly(endDate) : null;
+    const parsedEnd =
+      endDate === undefined
+        ? undefined
+        : endDate
+          ? this.parseDateOnly(endDate)
+          : null;
 
     if (parsedEnd && parsedEnd < assignment.startDate) {
       throw new BadRequestException(
@@ -754,12 +937,39 @@ export class PatrolScheduleService {
       );
     }
 
-    return this.prisma.patrolScheduleAssignment.update({
-      where: { id: assignmentId },
-      data: {
-        ...(endDate !== undefined && { endDate: parsedEnd }),
-        ...(status !== undefined && { status }),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      const updated = await tx.patrolScheduleAssignment.update({
+        where: { id: assignmentId },
+        data: {
+          ...(endDate !== undefined && { endDate: parsedEnd }),
+          ...(status !== undefined && { status }),
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: adminId,
+        action: 'UPDATE_ASSIGNMENT',
+        entityType: 'PatrolScheduleAssignment',
+        entityId: assignmentId,
+        oldData: {
+          scheduleId: assignment.scheduleId,
+          userId: assignment.userId,
+          startDate: this.formatDate(assignment.startDate),
+          endDate: assignment.endDate
+            ? this.formatDate(assignment.endDate)
+            : null,
+          status: assignment.status,
+        },
+        newData: {
+          scheduleId: updated.scheduleId,
+          userId: updated.userId,
+          startDate: this.formatDate(updated.startDate),
+          endDate: updated.endDate ? this.formatDate(updated.endDate) : null,
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
@@ -837,6 +1047,25 @@ export class PatrolScheduleService {
   }
 
   private parseDateOnly(date: string): Date {
-    return new Date(`${date}T00:00:00.000Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      throw new BadRequestException(
+        'Tanggal harus menggunakan format YYYY-MM-DD',
+      );
+    }
+
+    const parsed = new Date(`${date}T00:00:00.000Z`);
+
+    if (
+      Number.isNaN(parsed.getTime()) ||
+      parsed.toISOString().slice(0, 10) !== date
+    ) {
+      throw new BadRequestException('Tanggal tidak valid');
+    }
+
+    return parsed;
+  }
+
+  private formatDate(date: Date): string {
+    return date.toISOString().slice(0, 10);
   }
 }

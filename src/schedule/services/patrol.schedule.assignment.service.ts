@@ -6,10 +6,10 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 
+import { AuditLogService } from '../../audit/audit.service.js';
 import { Prisma } from '../../generated/prisma/client.js';
 import { ScheduleAssignmentStatus } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
-
 import {
   BulkAssignUserDto,
   CreateScheduleAssignmentDto,
@@ -21,6 +21,7 @@ export class PatrolScheduleAssignmentService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly generationService: ScheduleGenerationService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(
@@ -89,25 +90,45 @@ export class PatrolScheduleAssignmentService {
       throw new ConflictException('User already has overlapping assignment');
     }
 
-    const assignment = await this.prisma.patrolScheduleAssignment.create({
-      data: {
-        scheduleId,
-        userId: dto.userId,
-        startDate,
-        endDate,
-        status: ScheduleAssignmentStatus.ACTIVE,
-        createdById,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            employeeNumber: true,
-            fullName: true,
-            username: true,
+    const assignment = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.patrolScheduleAssignment.create({
+        data: {
+          scheduleId,
+          userId: dto.userId,
+          startDate,
+          endDate,
+          status: ScheduleAssignmentStatus.ACTIVE,
+          createdById,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              employeeNumber: true,
+              fullName: true,
+              username: true,
+            },
           },
         },
-      },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: createdById,
+        action: 'CREATE_ASSIGNMENT',
+        entityType: 'PatrolScheduleAssignment',
+        entityId: created.id,
+        newData: {
+          scheduleId: created.scheduleId,
+          scheduleName: schedule.name,
+          userId: created.userId,
+          userName: created.user.fullName,
+          startDate: this.formatDate(created.startDate),
+          endDate: created.endDate ? this.formatDate(created.endDate) : null,
+          status: created.status,
+        },
+      });
+
+      return created;
     });
 
     await this.generateForAssignment(scheduleId, startDate, endDate);
@@ -183,11 +204,9 @@ export class PatrolScheduleAssignmentService {
               scheduleId: assign.scheduleId,
               userId: dto.userId,
               status: ScheduleAssignmentStatus.ACTIVE,
-
               startDate: {
                 lte: endDate,
               },
-
               OR: [
                 {
                   endDate: null,
@@ -215,6 +234,25 @@ export class PatrolScheduleAssignmentService {
               endDate,
               status: ScheduleAssignmentStatus.ACTIVE,
               createdById,
+            },
+          });
+
+          await this.auditLogService.createAudit(tx, {
+            userId: createdById,
+            action: 'CREATE_ASSIGNMENT',
+            entityType: 'PatrolScheduleAssignment',
+            entityId: newAssignment.id,
+            newData: {
+              scheduleId: newAssignment.scheduleId,
+              scheduleName: schedule.name,
+              userId: newAssignment.userId,
+              userName: user.fullName,
+              startDate: this.formatDate(newAssignment.startDate),
+              endDate: newAssignment.endDate
+                ? this.formatDate(newAssignment.endDate)
+                : null,
+              status: newAssignment.status,
+              source: 'BULK_ASSIGNMENT',
             },
           });
 
@@ -328,39 +366,75 @@ export class PatrolScheduleAssignmentService {
     });
   }
 
-  async remove(scheduleId: string, id: string) {
-    const assignment = await this.prisma.patrolScheduleAssignment.findFirst({
-      where: {
-        id,
-        scheduleId,
-      },
+  async remove(scheduleId: string, id: string, adminId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const assignment = await tx.patrolScheduleAssignment.findFirst({
+        where: {
+          id,
+          scheduleId,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeNumber: true,
+            },
+          },
+          schedule: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+
+      if (!assignment) {
+        throw new NotFoundException('Assignment not found');
+      }
+
+      const rounds = await tx.patrolRound.count({
+        where: {
+          assignmentId: id,
+        },
+      });
+
+      if (rounds > 0) {
+        throw new ConflictException(
+          'Assignment cannot be deleted because rounds already exist',
+        );
+      }
+
+      await this.auditLogService.createAudit(tx, {
+        userId: adminId,
+        action: 'DELETE_ASSIGNMENT',
+        entityType: 'PatrolScheduleAssignment',
+        entityId: assignment.id,
+        oldData: {
+          scheduleId: assignment.scheduleId,
+          scheduleName: assignment.schedule.name,
+          userId: assignment.userId,
+          userName: assignment.user.fullName,
+          employeeNumber: assignment.user.employeeNumber,
+          startDate: this.formatDate(assignment.startDate),
+          endDate: assignment.endDate
+            ? this.formatDate(assignment.endDate)
+            : null,
+          status: assignment.status,
+        },
+      });
+
+      await tx.patrolScheduleAssignment.delete({
+        where: {
+          id,
+        },
+      });
+
+      return {
+        message: 'Schedule assignment deleted successfully',
+      };
     });
-
-    if (!assignment) {
-      throw new NotFoundException('Assignment not found');
-    }
-
-    const rounds = await this.prisma.patrolRound.count({
-      where: {
-        assignmentId: id,
-      },
-    });
-
-    if (rounds > 0) {
-      throw new ConflictException(
-        'Assignment cannot be deleted because rounds already exist',
-      );
-    }
-
-    await this.prisma.patrolScheduleAssignment.delete({
-      where: {
-        id,
-      },
-    });
-
-    return {
-      message: 'Schedule assignment deleted successfully',
-    };
   }
 
   private assertScheduleReady(schedule: { status: string; points: unknown[] }) {
@@ -409,11 +483,9 @@ export class PatrolScheduleAssignmentService {
         scheduleId,
         userId,
         status: ScheduleAssignmentStatus.ACTIVE,
-
         startDate: {
           lte: endDate ?? new Date('9999-12-31T00:00:00.000Z'),
         },
-
         OR: [
           {
             endDate: null,

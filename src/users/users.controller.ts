@@ -7,14 +7,15 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
-  Req,
   UploadedFile,
   UseGuards,
 } from '@nestjs/common';
 
+import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../common/guards/roles.guard.js';
+import type { User } from '../generated/prisma/client.js';
 import { RoleName } from '../generated/prisma/enums.js';
 import { CreateUserDto } from './dto/create-users.dto.js';
 import { UpdateUserDto } from './dto/update-users.dto.js';
@@ -45,41 +46,51 @@ export class UsersController {
   }
 
   @Patch(':id/photo')
+  @UseGuards(JwtAuthGuard)
   changeUserPhoto(
     @Param('id', new ParseUUIDPipe()) id: string,
     @UploadedFile() file: any,
+    @CurrentUser() user: User,
   ) {
-    return this.usersService.changeUserPhoto(id, file);
+    return this.usersService.changeUserPhoto(id, file, user.id);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(RoleName.ADMIN)
   @Post()
-  create(@Body() dto: CreateUserDto, @Req() req: any) {
-    return this.usersService.createUser(dto, req.user?.id);
+  create(@Body() dto: CreateUserDto, @CurrentUser() user: User) {
+    return this.usersService.createUser(dto, user?.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Roles(RoleName.ADMIN)
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.updateUser(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.usersService.updateUser(id, dto, user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Roles(RoleName.ADMIN)
   @Patch(':id/deactivate')
-  deactivate(@Param('id') id: string) {
-    return this.usersService.deactivateUser(id);
+  deactivate(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.usersService.deactivateUser(id, user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Roles(RoleName.ADMIN)
   @Patch(':id/activate')
-  activate(@Param('id') id: string) {
-    return this.usersService.activateUser(id);
+  activate(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.usersService.activateUser(id, user.id);
   }
 
+  @UseGuards(JwtAuthGuard)
   @Roles(RoleName.ADMIN)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.usersService.removeUser(id);
+  remove(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.usersService.removeUser(id, user.id);
   }
 }

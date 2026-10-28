@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { AuditLogService } from '../../audit/audit.service.js';
 import {
   PatrolRoundStatus,
   Prisma,
@@ -22,7 +23,10 @@ type Assignment = Awaited<
 export class ShiftChangeService {
   private readonly timezone = 'Asia/Makassar';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async request(dto: CreateShiftChangeDto, adminId: string) {
     const effectiveDate = this.parseDate(dto.effectiveDate);
@@ -118,7 +122,7 @@ export class ShiftChangeService {
 
         const now = new Date();
 
-        return tx.shiftChange.create({
+        const shiftChange = await tx.shiftChange.create({
           data: {
             firstAssignmentId: first.id,
             secondAssignmentId: second.id,
@@ -144,6 +148,35 @@ export class ShiftChangeService {
             },
           },
         });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: adminId,
+          action: 'APPROVE',
+          entityType: 'ShiftChange',
+          entityId: shiftChange.id,
+          oldData: {
+            firstAssignmentId: first.id,
+            firstUserId: first.userId,
+            firstScheduleId: first.scheduleId,
+            secondAssignmentId: second.id,
+            secondUserId: second.userId,
+            secondScheduleId: second.scheduleId,
+          },
+          newData: {
+            shiftChangeId: shiftChange.id,
+            firstAssignmentId: first.id,
+            firstUserId: second.userId,
+            firstScheduleId: first.scheduleId,
+            secondAssignmentId: second.id,
+            secondUserId: first.userId,
+            secondScheduleId: second.scheduleId,
+            effectiveDate: this.formatDate(effectiveDate),
+            reason: dto.reason?.trim() || null,
+            status: ShiftChangeStatus.APPROVED,
+          },
+        });
+
+        return shiftChange;
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

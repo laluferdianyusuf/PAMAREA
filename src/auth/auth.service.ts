@@ -9,20 +9,18 @@ import {
 
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-
-import { PrismaService } from '../prisma/prisma.service.js';
-
-import { LoginDto } from './dto/login.dto.js';
-import { RegisterDto } from './dto/register.js';
-
 import * as bcrypt from 'bcrypt';
 import { randomUUID } from 'crypto';
 
+import { AuditLogService } from '../audit/audit.service.js';
 import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { generateEmployeeNumber } from '../common/utils/employee-number.util.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { UserStatus } from '../generated/prisma/enums.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
+import { LoginDto } from './dto/login.dto.js';
+import { RegisterDto } from './dto/register.js';
 import { RefreshTokenPayload } from './interfaces/refresh-token.interface.js';
 
 @Injectable()
@@ -32,6 +30,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly storageService: StorageService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async register(dto: RegisterDto, createdById?: string) {
@@ -117,6 +116,14 @@ export class AuthService {
       const user = await this.prisma.$transaction(async (tx) => {
         let teamId: string | null = null;
 
+        let createdTeam:
+          | {
+              id: string;
+              name: string;
+              code: string;
+            }
+          | undefined;
+
         if (dto.team) {
           const team = await tx.team.create({
             data: {
@@ -129,6 +136,12 @@ export class AuthService {
           });
 
           teamId = team.id;
+
+          createdTeam = {
+            id: team.id,
+            name: team.name,
+            code: team.code,
+          };
         }
 
         if (dto.teamId) {
@@ -149,7 +162,7 @@ export class AuthService {
           teamId = team.id;
         }
 
-        return tx.user.create({
+        const user = await tx.user.create({
           data: {
             roleId: dto.roleId,
             siteId: dto.siteId ?? null,
@@ -170,6 +183,29 @@ export class AuthService {
             team: true,
           },
         });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: createdById ?? user.id,
+          action: 'REGISTER_USER',
+          entityType: 'USER',
+          entityId: user.id,
+          newData: {
+            id: user.id,
+            fullName: user.fullName,
+            username: user.username,
+            email: user.email,
+            employeeNumber: user.employeeNumber,
+            roleId: user.roleId,
+            roleName: user.role.name,
+            siteId: user.siteId,
+            teamId: user.teamId,
+            status: user.status,
+            registrationType: createdById ? 'ADMIN' : 'SELF',
+            ...(createdTeam ? { createdTeam } : {}),
+          },
+        });
+
+        return user;
       });
 
       return this.sanitizeUser(user);
@@ -193,7 +229,6 @@ export class AuthService {
         username: dto.username,
         deletedAt: null,
       },
-
       include: {
         role: {
           select: {
@@ -237,44 +272,52 @@ export class AuthService {
     }
 
     const sessionId = randomUUID();
-
     const tokens = await this.generateTokens(user.id, sessionId);
-
     const refreshTokenHash = await bcrypt.hash(tokens.refreshToken, 12);
-
     const refreshExpiresIn = 30 * 24 * 60 * 60 * 1000;
+    const loginAt = new Date();
 
-    await this.prisma.session.create({
-      data: {
-        id: sessionId,
+    await this.prisma.$transaction(async (tx) => {
+      await tx.session.create({
+        data: {
+          id: sessionId,
+          userId: user.id,
+          refreshTokenHash,
+          expiresAt: new Date(Date.now() + refreshExpiresIn),
+        },
+      });
 
+      await tx.user.update({
+        where: {
+          id: user.id,
+        },
+        data: {
+          lastLoginAt: loginAt,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
         userId: user.id,
-
-        refreshTokenHash,
-
-        expiresAt: new Date(Date.now() + refreshExpiresIn),
-      },
-    });
-
-    await this.prisma.user.update({
-      where: {
-        id: user.id,
-      },
-
-      data: {
-        lastLoginAt: new Date(),
-      },
+        action: 'LOGIN_SUCCESS',
+        entityType: 'SESSION',
+        entityId: sessionId,
+        newData: {
+          sessionId,
+          userId: user.id,
+          username: user.username,
+          roleName: user.role.name,
+          siteId: user.siteId,
+          loginAt: loginAt.toISOString(),
+        },
+      });
     });
 
     return {
       message: 'Login berhasil',
-
       data: {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-
         expiresIn: 900,
-
         user: this.sanitizeUser(user),
       },
     };
@@ -302,7 +345,6 @@ export class AuthService {
       where: {
         id: payload.sessionId,
       },
-
       include: {
         user: {
           include: {
@@ -359,34 +401,45 @@ export class AuthService {
       throw new UnauthorizedException('User tidak aktif');
     }
 
-    // Pastikan token memang milik session/user yang sama.
     if (payload.sub !== user.id) {
       throw new UnauthorizedException('Refresh token tidak valid');
     }
 
     const tokens = await this.generateTokens(user.id, session.id);
-
     const newRefreshTokenHash = await bcrypt.hash(tokens.refreshToken, 12);
+    const refreshedAt = new Date();
 
-    await this.prisma.session.update({
-      where: {
-        id: session.id,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.session.update({
+        where: {
+          id: session.id,
+        },
+        data: {
+          refreshTokenHash: newRefreshTokenHash,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      });
 
-      data: {
-        refreshTokenHash: newRefreshTokenHash,
-
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      },
+      await this.auditLogService.createAudit(tx, {
+        userId: user.id,
+        action: 'REFRESH_TOKEN',
+        entityType: 'SESSION',
+        entityId: session.id,
+        newData: {
+          sessionId: session.id,
+          refreshedAt: refreshedAt.toISOString(),
+          expiresAt: new Date(
+            refreshedAt.getTime() + 30 * 24 * 60 * 60 * 1000,
+          ).toISOString(),
+        },
+      });
     });
 
     return {
       message: 'Token berhasil diperbarui',
-
       data: {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-
         expiresIn: 900,
       },
     };
@@ -408,14 +461,30 @@ export class AuthService {
     }
 
     if (!session.revokedAt) {
-      await this.prisma.session.update({
-        where: {
-          id: sessionId,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        const revokedAt = new Date();
 
-        data: {
-          revokedAt: new Date(),
-        },
+        await tx.session.update({
+          where: {
+            id: sessionId,
+          },
+          data: {
+            revokedAt,
+          },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId,
+          action: 'LOGOUT',
+          entityType: 'SESSION',
+          entityId: sessionId,
+          oldData: {
+            revokedAt: null,
+          },
+          newData: {
+            revokedAt: revokedAt.toISOString(),
+          },
+        });
       });
     }
 
@@ -425,22 +494,46 @@ export class AuthService {
   }
 
   async logoutAll(userId: string) {
-    const result = await this.prisma.session.updateMany({
-      where: {
+    return this.prisma.$transaction(async (tx) => {
+      const activeSessions = await tx.session.findMany({
+        where: {
+          userId,
+          revokedAt: null,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const revokedAt = new Date();
+
+      const result = await tx.session.updateMany({
+        where: {
+          userId,
+          revokedAt: null,
+        },
+        data: {
+          revokedAt,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
         userId,
-        revokedAt: null,
-      },
+        action: 'LOGOUT_ALL',
+        entityType: 'USER',
+        entityId: userId,
+        newData: {
+          revokedSessions: result.count,
+          sessionIds: activeSessions.map((session) => session.id),
+          revokedAt: revokedAt.toISOString(),
+        },
+      });
 
-      data: {
-        revokedAt: new Date(),
-      },
+      return {
+        message: 'Semua session berhasil dikeluarkan',
+        revokedSessions: result.count,
+      };
     });
-
-    return {
-      message: 'Semua session berhasil dikeluarkan',
-
-      revokedSessions: result.count,
-    };
   }
 
   async getMe(userId: string) {
@@ -449,7 +542,6 @@ export class AuthService {
         id: userId,
         deletedAt: null,
       },
-
       include: {
         role: {
           select: {
@@ -488,7 +580,6 @@ export class AuthService {
 
     return {
       message: 'Data user berhasil ditemukan',
-
       data: this.sanitizeUser(user),
     };
   }
@@ -512,39 +603,56 @@ export class AuthService {
     const savedPhoto = await this.storageService.saveUserPhoto(file);
 
     try {
-      const updatedUser = await this.prisma.user.update({
-        where: {
-          id: userId,
-        },
-        data: {
-          photoUrl: savedPhoto.url,
-        },
-        include: {
-          role: {
-            select: {
-              id: true,
-              name: true,
-              description: true,
+      const updatedUser = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: {
+            id: userId,
+          },
+          data: {
+            photoUrl: savedPhoto.url,
+          },
+          include: {
+            role: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+              },
+            },
+            site: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                address: true,
+                status: true,
+              },
+            },
+            team: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                description: true,
+              },
             },
           },
-          site: {
-            select: {
-              id: true,
-              name: true,
-              code: true,
-              address: true,
-              status: true,
-            },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId,
+          action: 'CHANGE_MY_PHOTO',
+          entityType: 'USER',
+          entityId: userId,
+          oldData: {
+            photoUrl: user.photoUrl,
           },
-          team: {
-            select: {
-              id: true,
-              name: true,
-              code: true,
-              description: true,
-            },
+          newData: {
+            photoUrl: updated.photoUrl,
           },
-        },
+        });
+
+        return updated;
       });
 
       return {
@@ -553,6 +661,7 @@ export class AuthService {
       };
     } catch (error) {
       console.error('CHANGE MY PHOTO ERROR:', error);
+
       throw new InternalServerErrorException('Gagal memperbarui foto profil');
     }
   }
@@ -564,10 +673,8 @@ export class AuthService {
         sessionId,
         type: 'access',
       },
-
       {
         secret: this.configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
-
         expiresIn: '15m',
       },
     );
@@ -578,10 +685,8 @@ export class AuthService {
         sessionId,
         type: 'refresh',
       },
-
       {
         secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
-
         expiresIn: '30d',
       },
     );
@@ -621,7 +726,6 @@ export class AuthService {
     user: T,
   ): Omit<T, 'passwordHash'> {
     const { passwordHash: _passwordHash, ...safeUser } = user;
-
     return safeUser;
   }
 }

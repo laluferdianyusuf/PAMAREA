@@ -8,9 +8,11 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
+import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
+import type { User } from '../../generated/prisma/client.js';
 import { RoleName } from '../../generated/prisma/enums.js';
 import { AddPointDto } from '../dto/add.point.dto.js';
 import {
@@ -32,8 +34,9 @@ export class PatrolSchedulePointController {
     scheduleId: string,
     @Body()
     dto: CreateSchedulePointDto,
+    @CurrentUser() user: User,
   ) {
-    return this.service.add(scheduleId, dto);
+    return this.service.add(scheduleId, dto, user.id);
   }
 
   @Post(':scheduleId/many')
@@ -44,14 +47,16 @@ export class PatrolSchedulePointController {
 
     @Body()
     dto: CreateManySchedulePointsDto,
+    @CurrentUser() user: User,
   ) {
-    return this.service.addMany(scheduleId, dto);
+    return this.service.addMany(scheduleId, dto, user.id);
   }
 
   @Post(':scheduleId/new-point')
   async addPoint(
     @Param('scheduleId') scheduleId: string,
     @Body() dto: AddPointDto,
+    @CurrentUser() user: User,
   ) {
     const isRequired = dto.required ?? true;
 
@@ -59,6 +64,7 @@ export class PatrolSchedulePointController {
       scheduleId,
       dto.patrolPointId,
       dto.insertAtSequence,
+      user.id,
       isRequired,
     );
   }
@@ -81,8 +87,9 @@ export class PatrolSchedulePointController {
     pointId: string,
     @Body()
     dto: UpdateSchedulePointDto,
+    @CurrentUser() user: User,
   ) {
-    return this.service.update(scheduleId, pointId, dto);
+    return this.service.update(scheduleId, pointId, dto, user.id);
   }
 
   @Delete(':scheduleId/:pointId')
@@ -92,7 +99,8 @@ export class PatrolSchedulePointController {
     scheduleId: string,
     @Param('pointId')
     pointId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.service.remove(scheduleId, pointId);
+    return this.service.remove(scheduleId, pointId, user.id);
   }
 }

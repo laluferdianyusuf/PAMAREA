@@ -33,8 +33,9 @@ export class PatrolRoundController {
   async reorderCheckpoints(
     @Param('roundId', new ParseUUIDPipe()) roundId: string,
     @Body() dto: ReorderRoundCheckpointsDto,
+    @CurrentUser() user: User,
   ) {
-    return this.service.reorderRoundCheckpoints(roundId, dto);
+    return this.service.reorderRoundCheckpoints(roundId, dto, user.id);
   }
 
   @Post(':id/start')

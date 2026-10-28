@@ -10,11 +10,18 @@ import { AuthService } from './auth.service.js';
 
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 
+import { AuditLogModule } from '../audit/audit.module.js';
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { StorageService } from '../storage/storage.service.js';
 
 @Module({
-  imports: [ConfigModule, PrismaModule, PassportModule, JwtModule.register({})],
+  imports: [
+    ConfigModule,
+    PrismaModule,
+    PassportModule,
+    JwtModule.register({}),
+    AuditLogModule,
+  ],
 
   controllers: [AuthController],
 

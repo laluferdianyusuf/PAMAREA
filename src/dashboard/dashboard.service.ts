@@ -15,10 +15,6 @@ export class DashboardService {
 
   private readonly timeZone = 'Asia/Makassar';
 
-  /**
-   * Mendapatkan tanggal kalender hari ini berdasarkan WITA.
-   * Format: YYYY-MM-DD.
-   */
   private getTodayDateKey(): string {
     const parts = new Intl.DateTimeFormat('en-CA', {
       timeZone: this.timeZone,
@@ -69,7 +65,7 @@ export class DashboardService {
     }
 
     const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Makassar',
+      timeZone: this.timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -103,7 +99,6 @@ export class DashboardService {
   }
 
   async getMobileDashboard(userId: string, siteId: string) {
-    // Sinkronisasi ronde yang sudah melewati batas waktu.
     await this.scheduleRoundService.syncOverdueRounds();
 
     const dateKey = this.getTodayDateKey();
@@ -208,7 +203,6 @@ export class DashboardService {
         }
 
         const startMs = new Date(round.scheduledStartAt).getTime();
-
         const endMs = new Date(round.scheduledEndAt).getTime();
 
         return nowMs >= startMs && nowMs <= endMs;
@@ -222,7 +216,6 @@ export class DashboardService {
         }
 
         const startMs = new Date(round.scheduledStartAt).getTime();
-
         const endMs = new Date(round.scheduledEndAt).getTime();
 
         return startMs > nowMs && endMs >= nowMs;
@@ -240,6 +233,7 @@ export class DashboardService {
       where: {
         assignment: {
           userId,
+          status: 'ACTIVE',
           schedule: {
             siteId,
           },
@@ -247,6 +241,9 @@ export class DashboardService {
         scheduledStartAt: {
           gte: startOfMonth,
           lt: startOfNextMonth,
+        },
+        status: {
+          not: 'CANCELLED',
         },
       },
       select: {
@@ -262,15 +259,17 @@ export class DashboardService {
 
     const performanceScore =
       totalMonthlyRounds === 0
-        ? 100
+        ? null
         : Math.round((completedMonthlyRounds / totalMonthlyRounds) * 100);
 
     const performanceLabel =
-      performanceScore >= 90
-        ? 'Sangat Baik'
-        : performanceScore >= 75
-          ? 'Baik'
-          : 'Perlu Peningkatan';
+      performanceScore === null
+        ? 'Belum Ada Data'
+        : performanceScore >= 90
+          ? 'Sangat Baik'
+          : performanceScore >= 75
+            ? 'Baik'
+            : 'Perlu Peningkatan';
 
     if (todayRounds.length === 0) {
       return {
@@ -299,7 +298,6 @@ export class DashboardService {
       data: {
         user,
         site,
-
         shift: currentSchedule
           ? {
               scheduleName: currentSchedule.name,
@@ -308,14 +306,12 @@ export class DashboardService {
               intervalMinutes: currentSchedule.intervalMinutes,
             }
           : null,
-
         progress: {
           percentage: progressPercentage,
           completed: completedCheckpoints,
           missed: missedCheckpoints,
           total: totalCheckpoints,
         },
-
         nextPatrol: nextRound
           ? {
               roundId: nextRound.id,
@@ -325,12 +321,11 @@ export class DashboardService {
               ),
               scheduledEndAt: this.toWitaISOString(nextRound.scheduledEndAt),
               status: nextRound.status,
-              remainingCheckpoints: nextRound.checkpoints.filter(
-                (checkpoint) => checkpoint.status === 'PENDING',
-              ).length,
+              remainingCheckpoints: this.getRemainingCheckpoints(
+                nextRound.checkpoints,
+              ),
             }
           : null,
-
         performance: {
           monthlyScore: performanceScore,
           label: performanceLabel,
@@ -502,7 +497,6 @@ export class DashboardService {
           completedCheckpoints,
           outOfRadiusAlerts: outOfRadiusCount,
         },
-
         recentExecutions: recentPatrols.map((patrol) => ({
           id: patrol.id,
           guardName: patrol.user.fullName,
@@ -512,7 +506,6 @@ export class DashboardService {
             patrol.gpsValidationStatus === 'VALID' ? 'On Site' : 'Off Site',
           timestamp: patrol.startedAt,
         })),
-
         criticalFindingsFeed: criticalFindings.map((finding) => ({
           id: finding.id,
           severity: finding.severity,

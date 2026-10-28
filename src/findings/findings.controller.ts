@@ -45,18 +45,26 @@ export class FindingsController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateFindingDto) {
-    return this.findingsService.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateFindingDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.findingsService.update(id, dto, user.id);
   }
 
   @Patch(':id/assign')
-  assign(@Param('id') id: string, @Body() dto: AssignFindingDto) {
-    return this.findingsService.assign(id, dto);
+  assign(
+    @Param('id') id: string,
+    @Body() dto: AssignFindingDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.findingsService.assign(id, dto, user.id);
   }
 
   @Patch(':id/start')
-  start(@Param('id') id: string) {
-    return this.findingsService.start(id);
+  start(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.findingsService.start(id, user.id);
   }
 
   @Patch(':id/resolve')
@@ -93,12 +101,17 @@ export class FindingsController {
   async addPhoto(
     @Param('findingId') findingId: string,
     @UploadedFile() file: any,
+    @CurrentUser() user: User,
   ) {
-    return this.findingsService.addPhoto(findingId, file);
+    return this.findingsService.addPhoto(findingId, file, user.id);
   }
 
   @Delete(':id/photos/:photoId')
-  removePhoto(@Param('id') id: string, @Param('photoId') photoId: string) {
-    return this.findingsService.removePhoto(id, photoId);
+  removePhoto(
+    @Param('id') id: string,
+    @Param('photoId') photoId: string,
+    @CurrentUser() user: User,
+  ) {
+    return this.findingsService.removePhoto(id, photoId, user.id);
   }
 }

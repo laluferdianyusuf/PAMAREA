@@ -4,6 +4,7 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { AuditLogService } from '../audit/audit.service.js';
 import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { EmergencyService } from '../emergency/emergency.service.js';
 import {
@@ -31,6 +32,7 @@ export class PatrolsService {
     private readonly nfcValidationService: NfcValidationService,
     private readonly storageService: StorageService,
     private readonly emergencyService: EmergencyService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async getToday(userId: string) {
@@ -103,16 +105,12 @@ export class PatrolsService {
 
   async startPatrol(checkpointId: string, userId: string, dto: StartPatrolDto) {
     const checkpoint = await this.prisma.patrolCheckpoint.findUnique({
-      where: {
-        id: checkpointId,
-      },
+      where: { id: checkpointId },
       include: {
         round: {
           include: {
             scheduleDate: {
-              include: {
-                schedule: true,
-              },
+              include: { schedule: true },
             },
             assignment: true,
           },
@@ -162,17 +160,11 @@ export class PatrolsService {
       const previousCheckpoint = await this.prisma.patrolCheckpoint.findFirst({
         where: {
           roundId: round.id,
-          sequence: {
-            lt: checkpoint.sequence,
-          },
+          sequence: { lt: checkpoint.sequence },
           required: true,
-          status: {
-            not: PatrolCheckpointStatus.COMPLETED,
-          },
+          status: { not: PatrolCheckpointStatus.COMPLETED },
         },
-        orderBy: {
-          sequence: 'asc',
-        },
+        orderBy: { sequence: 'asc' },
       });
 
       if (previousCheckpoint) {
@@ -198,9 +190,7 @@ export class PatrolsService {
           ],
         },
       },
-      orderBy: {
-        startedAt: 'desc',
-      },
+      orderBy: { startedAt: 'desc' },
     });
 
     if (existingPatrol) {
@@ -208,6 +198,7 @@ export class PatrolsService {
     }
 
     const reportNumber = await this.generateReportNumber();
+    const startedAt = new Date();
 
     const patrol = await this.prisma.$transaction(async (tx) => {
       const created = await tx.patrol.create({
@@ -220,14 +211,12 @@ export class PatrolsService {
           checkpointId: checkpoint.id,
           deviceId: dto.deviceId ?? null,
           status: PatrolStatus.STARTED,
-          startedAt: new Date(),
+          startedAt,
         },
       });
 
       await tx.patrolCheckpoint.update({
-        where: {
-          id: checkpoint.id,
-        },
+        where: { id: checkpoint.id },
         data: {
           status: PatrolCheckpointStatus.IN_PROGRESS,
         },
@@ -235,15 +224,40 @@ export class PatrolsService {
 
       if (round.status === PatrolRoundStatus.PENDING) {
         await tx.patrolRound.update({
-          where: {
-            id: round.id,
-          },
+          where: { id: round.id },
           data: {
             status: PatrolRoundStatus.IN_PROGRESS,
-            startedAt: new Date(),
+            startedAt,
           },
         });
       }
+
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'START_PATROL',
+        entityType: 'Patrol',
+        entityId: created.id,
+        oldData: {
+          patrolStatus: null,
+          checkpointStatus: checkpoint.status,
+          roundStatus: round.status,
+        },
+        newData: {
+          reportNumber: created.reportNumber,
+          patrolStatus: created.status,
+          checkpointId: checkpoint.id,
+          checkpointStatus: PatrolCheckpointStatus.IN_PROGRESS,
+          roundId: round.id,
+          roundStatus:
+            round.status === PatrolRoundStatus.PENDING
+              ? PatrolRoundStatus.IN_PROGRESS
+              : round.status,
+          scheduleAssignmentId: assignment.id,
+          patrolPointId: checkpoint.patrolPointId,
+          siteId: schedule.siteId,
+          startedAt: startedAt.toISOString(),
+        },
+      });
 
       return created;
     });
@@ -464,9 +478,7 @@ export class PatrolsService {
 
   async bypassNfc(patrolId: string, userId: string, dto: BypassNfcDto) {
     const patrol = await this.prisma.patrol.findUnique({
-      where: {
-        id: patrolId,
-      },
+      where: { id: patrolId },
     });
 
     if (!patrol) {
@@ -483,21 +495,21 @@ export class PatrolsService {
       });
     }
 
-    if (patrol.status === 'SUBMITTED') {
+    if (patrol.status === PatrolStatus.SUBMITTED) {
       throw new UnprocessableEntityException({
         code: 'PATROL_ALREADY_SUBMITTED',
         message: 'Patrol sudah disubmit',
       });
     }
 
-    if (patrol.gpsValidationStatus !== 'VALID') {
+    if (patrol.gpsValidationStatus !== GpsValidationStatus.VALID) {
       throw new UnprocessableEntityException({
         code: 'GPS_REQUIRED',
         message: 'GPS harus valid sebelum NFC dapat dibypass',
       });
     }
 
-    if (patrol.nfcValidationStatus === 'VALID') {
+    if (patrol.nfcValidationStatus === NfcValidationStatus.VALID) {
       throw new UnprocessableEntityException({
         code: 'NFC_ALREADY_VALID',
         message: 'NFC patrol ini sudah valid',
@@ -511,32 +523,46 @@ export class PatrolsService {
       });
     }
 
-    const updated = await this.prisma.patrol.update({
-      where: {
-        id: patrolId,
-      },
-      data: {
-        nfcValidationStatus: 'BYPASSED',
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.patrol.update({
+        where: { id: patrolId },
+        data: {
+          nfcValidationStatus: NfcValidationStatus.BYPASSED,
+          nfcBypass: true,
+          nfcBypassReason: dto.reason,
+          nfcBypassNote: dto.note?.trim() || null,
+        },
+      });
 
-        nfcBypass: true,
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'BYPASS_PATROL_NFC',
+        entityType: 'Patrol',
+        entityId: patrolId,
+        oldData: {
+          nfcValidationStatus: patrol.nfcValidationStatus,
+          nfcBypass: patrol.nfcBypass,
+          nfcBypassReason: patrol.nfcBypassReason,
+          nfcBypassNote: patrol.nfcBypassNote,
+        },
+        newData: {
+          nfcValidationStatus: result.nfcValidationStatus,
+          nfcBypass: result.nfcBypass,
+          nfcBypassReason: result.nfcBypassReason,
+          nfcBypassNote: result.nfcBypassNote,
+          gpsValidationStatus: result.gpsValidationStatus,
+        },
+      });
 
-        nfcBypassReason: dto.reason,
-
-        nfcBypassNote: dto.note?.trim() || null,
-      },
+      return result;
     });
 
     return {
       patrolId: updated.id,
-
       nfcBypass: updated.nfcBypass,
-
       nfcValidationStatus: updated.nfcValidationStatus,
-
       bypassReason: updated.nfcBypassReason,
-
       bypassNote: updated.nfcBypassNote,
-
       gpsValidationStatus: updated.gpsValidationStatus,
     };
   }
@@ -546,80 +572,101 @@ export class PatrolsService {
     userId: string,
     dto: ValidateLocationDto,
   ) {
-    const startedAt = Date.now();
+    const patrol = await this.prisma.patrol.findUnique({
+      where: { id: patrolId },
+      include: { patrolPoint: true },
+    });
 
-    try {
-      const patrol = await this.prisma.patrol.findUnique({
-        where: { id: patrolId },
-        include: { patrolPoint: true },
+    if (!patrol) {
+      throw new NotFoundException({
+        code: 'PATROL_NOT_FOUND',
+        message: 'Patrol tidak ditemukan',
       });
+    }
 
-      if (!patrol) {
-        throw new NotFoundException({
-          code: 'PATROL_NOT_FOUND',
-          message: 'Patrol tidak ditemukan',
-        });
-      }
+    if (patrol.userId !== userId) {
+      throw new UnprocessableEntityException({
+        code: 'PATROL_ACCESS_DENIED',
+        message: 'Anda tidak memiliki akses ke patrol ini',
+      });
+    }
 
-      if (patrol.userId !== userId) {
-        throw new UnprocessableEntityException({
-          code: 'PATROL_ACCESS_DENIED',
-          message: 'Anda tidak memiliki akses ke patrol ini',
-        });
-      }
+    if (patrol.status === PatrolStatus.SUBMITTED) {
+      throw new UnprocessableEntityException({
+        code: 'PATROL_ALREADY_SUBMITTED',
+        message: 'Patrol sudah disubmit',
+      });
+    }
 
-      if (patrol.status === 'SUBMITTED') {
-        throw new UnprocessableEntityException({
-          code: 'PATROL_ALREADY_SUBMITTED',
-          message: 'Patrol sudah disubmit',
-        });
-      }
+    const point = patrol.patrolPoint;
 
-      const point = patrol.patrolPoint;
+    const result = this.gpsValidationService.validate(
+      dto.latitude,
+      dto.longitude,
+      Number(point.latitude),
+      Number(point.longitude),
+      point.radiusMeters,
+      dto.accuracy,
+    );
 
-      const result = this.gpsValidationService.validate(
-        dto.latitude,
-        dto.longitude,
-        Number(point.latitude),
-        Number(point.longitude),
-        point.radiusMeters,
-        dto.accuracy,
-      );
+    const validationStatus = result.valid
+      ? GpsValidationStatus.VALID
+      : GpsValidationStatus.INVALID;
 
-      await this.prisma.patrol.update({
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.patrol.update({
         where: { id: patrolId },
         data: {
           latitude: dto.latitude,
           longitude: dto.longitude,
           gpsAccuracy: dto.accuracy ?? null,
           distanceFromPoint: result.distanceMeters,
-          gpsValidationStatus: result.valid
-            ? GpsValidationStatus.VALID
-            : GpsValidationStatus.INVALID,
+          gpsValidationStatus: validationStatus,
         },
       });
 
-      if (!result.valid) {
-        throw new UnprocessableEntityException({
-          code: 'GPS_OUTSIDE_RADIUS',
-          message: 'Posisi Anda berada di luar radius patrol point',
-          details: {
-            distanceMeters: result.distanceMeters,
-            radiusMeters: result.radiusMeters,
-            accuracyMeters: result.accuracyMeters,
-          },
-        });
-      }
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'VALIDATE_PATROL_GPS',
+        entityType: 'Patrol',
+        entityId: patrolId,
+        oldData: {
+          gpsValidationStatus: patrol.gpsValidationStatus,
+          latitude: patrol.latitude,
+          longitude: patrol.longitude,
+          gpsAccuracy: patrol.gpsAccuracy,
+          distanceFromPoint: patrol.distanceFromPoint,
+        },
+        newData: {
+          gpsValidationStatus: updated.gpsValidationStatus,
+          latitude: updated.latitude,
+          longitude: updated.longitude,
+          gpsAccuracy: updated.gpsAccuracy,
+          distanceFromPoint: result.distanceMeters,
+          radiusMeters: result.radiusMeters,
+          accuracyMeters: result.accuracyMeters,
+        },
+      });
+    });
 
-      return {
-        valid: true,
-        distanceMeters: result.distanceMeters,
-        radiusMeters: result.radiusMeters,
-        accuracyMeters: result.accuracyMeters,
-      };
-    } catch (error) {
-      throw error;
+    if (!result.valid) {
+      throw new UnprocessableEntityException({
+        code: 'GPS_OUTSIDE_RADIUS',
+        message: 'Posisi Anda berada di luar radius patrol point',
+        details: {
+          distanceMeters: result.distanceMeters,
+          radiusMeters: result.radiusMeters,
+          accuracyMeters: result.accuracyMeters,
+        },
+      });
     }
+
+    return {
+      valid: true,
+      distanceMeters: result.distanceMeters,
+      radiusMeters: result.radiusMeters,
+      accuracyMeters: result.accuracyMeters,
+    };
   }
 
   async validateNfc(patrolId: string, userId: string, uid: string) {
@@ -657,14 +704,10 @@ export class PatrolsService {
       },
       include: {
         question: {
-          include: {
-            options: true,
-          },
+          include: { options: true },
         },
       },
-      orderBy: {
-        sortOrder: 'asc',
-      },
+      orderBy: { sortOrder: 'asc' },
     });
 
     const questionMap = new Map(
@@ -707,11 +750,26 @@ export class PatrolsService {
       }
     }
 
-    await this.prisma.$transaction(
-      dto.answers.map((answer) => {
+    await this.prisma.$transaction(async (tx) => {
+      const changes: {
+        questionId: string;
+        oldValue: string | null;
+        newValue: string | null;
+      }[] = [];
+
+      for (const answer of dto.answers) {
         const pointQuestion = questionMap.get(answer.questionId)!;
 
-        return this.prisma.patrolAnswer.upsert({
+        const existing = await tx.patrolAnswer.findUnique({
+          where: {
+            patrolId_questionId: {
+              patrolId,
+              questionId: answer.questionId,
+            },
+          },
+        });
+
+        await tx.patrolAnswer.upsert({
           where: {
             patrolId_questionId: {
               patrolId,
@@ -730,8 +788,35 @@ export class PatrolsService {
             answerLabelSnapshot: answer.answerLabel ?? null,
           },
         });
-      }),
-    );
+
+        changes.push({
+          questionId: answer.questionId,
+          oldValue: existing?.answerValue ?? null,
+          newValue: answer.answerValue ?? null,
+        });
+      }
+
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'SUBMIT_PATROL_ANSWERS',
+        entityType: 'Patrol',
+        entityId: patrolId,
+        oldData: {
+          answerCount: changes.length,
+          answers: changes.map((item) => ({
+            questionId: item.questionId,
+            answerValue: item.oldValue,
+          })),
+        },
+        newData: {
+          answerCount: changes.length,
+          answers: changes.map((item) => ({
+            questionId: item.questionId,
+            answerValue: item.newValue,
+          })),
+        },
+      });
+    });
 
     return this.getPatrol(patrolId, userId);
   }
@@ -783,21 +868,40 @@ export class PatrolsService {
 
     const uploadedFile = await this.storageService.saveImage(file);
 
-    const photo = await this.prisma.patrolPhoto.create({
-      data: {
-        patrolId,
-        answerId: answer.id,
-        fileUrl: uploadedFile.url,
-        fileName: file.originalname,
-        mimeType: file.mimetype,
-        fileSize: file.size,
-        latitude: dto.latitude ?? null,
-        longitude: dto.longitude ?? null,
-        capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : new Date(),
-      },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const photo = await tx.patrolPhoto.create({
+        data: {
+          patrolId,
+          answerId: answer.id,
+          fileUrl: uploadedFile.url,
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+          fileSize: file.size,
+          latitude: dto.latitude ?? null,
+          longitude: dto.longitude ?? null,
+          capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : new Date(),
+        },
+      });
 
-    return photo;
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'UPLOAD_PATROL_PHOTO',
+        entityType: 'PatrolPhoto',
+        entityId: photo.id,
+        newData: {
+          patrolId,
+          answerId: answer.id,
+          fileName: photo.fileName,
+          mimeType: photo.mimeType,
+          fileSize: photo.fileSize,
+          capturedAt: photo.capturedAt
+            ? new Date(photo.capturedAt.toISOString())
+            : new Date(),
+        },
+      });
+
+      return photo;
+    });
   }
 
   async submitPatrol(patrolId: string, userId: string) {
@@ -806,31 +910,56 @@ export class PatrolsService {
     this.ensureValidationComplete(patrol);
 
     await this.validateRequiredAnswers(patrolId, patrol.patrolPointId);
-
     await this.validateRequiredPhotos(patrolId, patrol.patrolPointId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updatedPatrol = await tx.patrol.update({
-        where: {
-          id: patrolId,
-        },
+        where: { id: patrolId },
         data: {
           status: PatrolStatus.SUBMITTED,
           completedAt: new Date(),
         },
       });
 
+      let oldCheckpointStatus: PatrolCheckpointStatus | null = null;
+
       if (patrol.checkpointId) {
+        const checkpoint = await tx.patrolCheckpoint.findUnique({
+          where: { id: patrol.checkpointId },
+          select: { status: true },
+        });
+
+        oldCheckpointStatus = checkpoint?.status ?? null;
+
         await tx.patrolCheckpoint.update({
-          where: {
-            id: patrol.checkpointId,
-          },
+          where: { id: patrol.checkpointId },
           data: {
             status: PatrolCheckpointStatus.COMPLETED,
             visitedAt: new Date(),
           },
         });
       }
+
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'SUBMIT_PATROL',
+        entityType: 'Patrol',
+        entityId: patrolId,
+        oldData: {
+          status: patrol.status,
+          completedAt: patrol.completedAt?.toISOString() ?? null,
+          checkpointId: patrol.checkpointId,
+          checkpointStatus: oldCheckpointStatus,
+        },
+        newData: {
+          status: updatedPatrol.status,
+          completedAt: updatedPatrol.completedAt?.toISOString() ?? null,
+          checkpointId: patrol.checkpointId,
+          checkpointStatus: patrol.checkpointId
+            ? PatrolCheckpointStatus.COMPLETED
+            : null,
+        },
+      });
 
       return updatedPatrol;
     });

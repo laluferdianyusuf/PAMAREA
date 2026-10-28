@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuditLogModule } from '../audit/audit.module.js';
 import { EmergencyService } from '../emergency/emergency.service.js';
 import { StorageModule } from '../storage/storage.module.js';
 import { PatrolsController } from './patrols.controller.js';
@@ -7,7 +8,7 @@ import { GpsValidationService } from './services/gps-validation.service.js';
 import { NfcValidationService } from './services/nfc-validation.service.js';
 
 @Module({
-  imports: [StorageModule],
+  imports: [StorageModule, AuditLogModule],
   controllers: [PatrolsController],
   providers: [
     PatrolsService,

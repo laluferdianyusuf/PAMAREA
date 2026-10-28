@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import { AuditLogService } from '../audit/audit.service.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { NfcStatus } from '../generated/prisma/enums.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -13,32 +14,48 @@ import { UpdateNfcTagDto } from './dto/update-nfc.dto.js';
 
 @Injectable()
 export class NfcService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async create(dto: CreateNfcTagDto, createdById: string) {
     const uid = this.normalizeUid(dto.uid);
 
-    const existing = await this.prisma.nfcTag.findUnique({
-      where: {
-        uid,
-      },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.nfcTag.findUnique({
+        where: { uid },
+      });
 
-    if (existing) {
-      throw new ConflictException(
-        'NFC Tag dengan UID tersebut sudah terdaftar',
-      );
-    }
+      if (existing) {
+        throw new ConflictException(
+          'NFC Tag dengan UID tersebut sudah terdaftar',
+        );
+      }
 
-    return this.prisma.nfcTag.create({
-      data: {
-        uid,
-        label: dto.label?.trim() || null,
-        status: NfcStatus.UNASSIGNED,
-        createdById: createdById,
-      },
+      const created = await tx.nfcTag.create({
+        data: {
+          uid,
+          label: dto.label?.trim() || null,
+          status: NfcStatus.UNASSIGNED,
+          createdById,
+        },
+        select: this.detailSelect(),
+      });
 
-      select: this.detailSelect(),
+      await this.auditLogService.createAudit(tx, {
+        userId: createdById,
+        action: 'CREATE_NFC_TAG',
+        entityType: 'NfcTag',
+        entityId: created.id,
+        newData: {
+          uid: created.uid,
+          label: created.label,
+          status: created.status,
+        },
+      });
+
+      return created;
     });
   }
 
@@ -47,11 +64,9 @@ export class NfcService {
       where: {
         ...(status ? { status } : {}),
       },
-
       orderBy: {
         createdAt: 'desc',
       },
-
       select: this.listSelect(),
     });
   }
@@ -61,11 +76,9 @@ export class NfcService {
       where: {
         status: NfcStatus.UNASSIGNED,
       },
-
       orderBy: {
         createdAt: 'desc',
       },
-
       select: {
         id: true,
         uid: true,
@@ -78,10 +91,7 @@ export class NfcService {
 
   async findOne(id: string) {
     const nfcTag = await this.prisma.nfcTag.findUnique({
-      where: {
-        id,
-      },
-
+      where: { id },
       select: this.detailSelect(),
     });
 
@@ -99,7 +109,6 @@ export class NfcService {
       where: {
         uid: normalizedUid,
       },
-
       select: {
         id: true,
         uid: true,
@@ -115,157 +124,283 @@ export class NfcService {
     return nfcTag;
   }
 
-  async update(id: string, dto: UpdateNfcTagDto) {
-    const existing = await this.getByIdOrThrow(id);
+  async update(id: string, dto: UpdateNfcTagDto, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.nfcTag.findUnique({
+        where: { id },
+      });
 
-    const data: Prisma.NfcTagUpdateInput = {};
-
-    if (dto.uid !== undefined) {
-      const uid = this.normalizeUid(dto.uid);
-
-      if (uid !== existing.uid) {
-        const duplicate = await this.prisma.nfcTag.findUnique({
-          where: {
-            uid,
-          },
-        });
-
-        if (duplicate) {
-          throw new ConflictException('UID NFC tersebut sudah digunakan');
-        }
-
-        data.uid = uid;
+      if (!existing) {
+        throw new NotFoundException('NFC Tag tidak ditemukan');
       }
-    }
 
-    if (dto.label !== undefined) {
-      data.label = dto.label.trim() || null;
-    }
+      const data: Prisma.NfcTagUpdateInput = {};
 
-    if (Object.keys(data).length === 0) {
-      return this.findOne(id);
-    }
+      if (dto.uid !== undefined) {
+        const uid = this.normalizeUid(dto.uid);
 
-    return this.prisma.nfcTag.update({
-      where: {
-        id,
-      },
+        if (uid !== existing.uid) {
+          const duplicate = await tx.nfcTag.findUnique({
+            where: { uid },
+          });
 
-      data,
+          if (duplicate) {
+            throw new ConflictException('UID NFC tersebut sudah digunakan');
+          }
 
-      select: this.detailSelect(),
+          data.uid = uid;
+        }
+      }
+
+      if (dto.label !== undefined) {
+        data.label = dto.label.trim() || null;
+      }
+
+      if (Object.keys(data).length === 0) {
+        return tx.nfcTag.findUniqueOrThrow({
+          where: { id },
+          select: this.detailSelect(),
+        });
+      }
+
+      const updated = await tx.nfcTag.update({
+        where: { id },
+        data,
+        select: this.detailSelect(),
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'UPDATE_NFC_TAG',
+        entityType: 'NfcTag',
+        entityId: id,
+        oldData: {
+          uid: existing.uid,
+          label: existing.label,
+          status: existing.status,
+        },
+        newData: {
+          uid: updated.uid,
+          label: updated.label,
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async markDamaged(id: string) {
-    const nfc = await this.getByIdOrThrow(id);
+  async markDamaged(id: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const nfc = await tx.nfcTag.findUnique({
+        where: { id },
+      });
 
-    if (nfc.status === NfcStatus.LOST) {
-      throw new ConflictException(
-        'NFC yang berstatus LOST tidak dapat ditandai DAMAGED',
-      );
-    }
+      if (!nfc) {
+        throw new NotFoundException('NFC Tag tidak ditemukan');
+      }
 
-    if (nfc.status === NfcStatus.REPLACED) {
-      throw new ConflictException(
-        'NFC yang sudah REPLACED tidak dapat digunakan lagi',
-      );
-    }
+      if (nfc.status === NfcStatus.LOST) {
+        throw new ConflictException(
+          'NFC yang berstatus LOST tidak dapat ditandai DAMAGED',
+        );
+      }
 
-    if (nfc.status === NfcStatus.INACTIVE) {
-      throw new ConflictException('NFC sedang INACTIVE');
-    }
+      if (nfc.status === NfcStatus.REPLACED) {
+        throw new ConflictException(
+          'NFC yang sudah REPLACED tidak dapat digunakan lagi',
+        );
+      }
 
-    return this.prisma.nfcTag.update({
-      where: {
-        id,
-      },
+      if (nfc.status === NfcStatus.INACTIVE) {
+        throw new ConflictException('NFC sedang INACTIVE');
+      }
 
-      data: {
-        status: NfcStatus.DAMAGED,
-      },
+      if (nfc.status === NfcStatus.DAMAGED) {
+        return tx.nfcTag.findUniqueOrThrow({
+          where: { id },
+          select: this.detailSelect(),
+        });
+      }
 
-      select: this.detailSelect(),
+      const updated = await tx.nfcTag.update({
+        where: { id },
+        data: {
+          status: NfcStatus.DAMAGED,
+        },
+        select: this.detailSelect(),
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'MARK_NFC_DAMAGED',
+        entityType: 'NfcTag',
+        entityId: id,
+        oldData: {
+          status: nfc.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async markLost(id: string) {
-    const nfc = await this.getByIdOrThrow(id);
+  async markLost(id: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const nfc = await tx.nfcTag.findUnique({
+        where: { id },
+      });
 
-    if (nfc.status === NfcStatus.REPLACED) {
-      throw new ConflictException(
-        'NFC yang sudah REPLACED tidak dapat ditandai LOST',
-      );
-    }
+      if (!nfc) {
+        throw new NotFoundException('NFC Tag tidak ditemukan');
+      }
 
-    return this.prisma.nfcTag.update({
-      where: {
-        id,
-      },
+      if (nfc.status === NfcStatus.REPLACED) {
+        throw new ConflictException(
+          'NFC yang sudah REPLACED tidak dapat ditandai LOST',
+        );
+      }
 
-      data: {
-        status: NfcStatus.LOST,
-      },
+      if (nfc.status === NfcStatus.LOST) {
+        return tx.nfcTag.findUniqueOrThrow({
+          where: { id },
+          select: this.detailSelect(),
+        });
+      }
 
-      select: this.detailSelect(),
+      const updated = await tx.nfcTag.update({
+        where: { id },
+        data: {
+          status: NfcStatus.LOST,
+        },
+        select: this.detailSelect(),
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'MARK_NFC_LOST',
+        entityType: 'NfcTag',
+        entityId: id,
+        oldData: {
+          status: nfc.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async activate(id: string) {
-    const nfc = await this.getByIdOrThrow(id);
+  async activate(id: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const nfc = await tx.nfcTag.findUnique({
+        where: { id },
+      });
 
-    if (nfc.status === NfcStatus.ACTIVE) {
-      return nfc;
-    }
+      if (!nfc) {
+        throw new NotFoundException('NFC Tag tidak ditemukan');
+      }
 
-    if (nfc.status === NfcStatus.DAMAGED) {
-      throw new ConflictException('NFC rusak tidak dapat diaktifkan');
-    }
+      if (nfc.status === NfcStatus.ACTIVE) {
+        return tx.nfcTag.findUniqueOrThrow({
+          where: { id },
+          select: this.detailSelect(),
+        });
+      }
 
-    if (nfc.status === NfcStatus.LOST) {
-      throw new ConflictException('NFC hilang tidak dapat diaktifkan');
-    }
+      if (nfc.status === NfcStatus.DAMAGED) {
+        throw new ConflictException('NFC rusak tidak dapat diaktifkan');
+      }
 
-    if (nfc.status === NfcStatus.REPLACED) {
-      throw new ConflictException(
-        'NFC yang sudah REPLACED tidak dapat diaktifkan',
-      );
-    }
+      if (nfc.status === NfcStatus.LOST) {
+        throw new ConflictException('NFC hilang tidak dapat diaktifkan');
+      }
 
-    return this.prisma.nfcTag.update({
-      where: {
-        id,
-      },
+      if (nfc.status === NfcStatus.REPLACED) {
+        throw new ConflictException(
+          'NFC yang sudah REPLACED tidak dapat diaktifkan',
+        );
+      }
 
-      data: {
-        status: NfcStatus.UNASSIGNED,
-      },
+      const updated = await tx.nfcTag.update({
+        where: { id },
+        data: {
+          status: NfcStatus.UNASSIGNED,
+        },
+        select: this.detailSelect(),
+      });
 
-      select: this.detailSelect(),
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'ACTIVATE_NFC',
+        entityType: 'NfcTag',
+        entityId: id,
+        oldData: {
+          status: nfc.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async deactivate(id: string) {
-    const nfc = await this.getByIdOrThrow(id);
+  async deactivate(id: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const nfc = await tx.nfcTag.findUnique({
+        where: { id },
+      });
 
-    if (nfc.status === NfcStatus.REPLACED) {
-      throw new ConflictException('NFC yang sudah REPLACED tidak dapat diubah');
-    }
+      if (!nfc) {
+        throw new NotFoundException('NFC Tag tidak ditemukan');
+      }
 
-    return this.prisma.nfcTag.update({
-      where: {
-        id,
-      },
+      if (nfc.status === NfcStatus.REPLACED) {
+        throw new ConflictException(
+          'NFC yang sudah REPLACED tidak dapat diubah',
+        );
+      }
 
-      data: {
-        status: NfcStatus.INACTIVE,
-      },
+      if (nfc.status === NfcStatus.INACTIVE) {
+        return tx.nfcTag.findUniqueOrThrow({
+          where: { id },
+          select: this.detailSelect(),
+        });
+      }
 
-      select: this.detailSelect(),
+      const updated = await tx.nfcTag.update({
+        where: { id },
+        data: {
+          status: NfcStatus.INACTIVE,
+        },
+        select: this.detailSelect(),
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'DEACTIVATE_NFC',
+        entityType: 'NfcTag',
+        entityId: id,
+        oldData: {
+          status: nfc.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async replace(oldNfcId: string, dto: ReplaceNfcTagDto) {
+  async replace(oldNfcId: string, dto: ReplaceNfcTagDto, actorId: string) {
     if (oldNfcId === dto.newNfcTagId) {
       throw new ConflictException('NFC lama dan NFC baru tidak boleh sama');
     }
@@ -295,25 +430,13 @@ export class NfcService {
         throw new ConflictException('NFC baru harus berstatus UNASSIGNED');
       }
 
-      await tx.nfcTag.update({
+      const replacedOldNfc = await tx.nfcTag.update({
         where: {
           id: oldNfc.id,
         },
-
         data: {
           status: NfcStatus.REPLACED,
         },
-      });
-
-      const updated = await tx.nfcTag.update({
-        where: {
-          id: newNfc.id,
-        },
-
-        data: {
-          status: NfcStatus.ACTIVE,
-        },
-
         select: {
           id: true,
           uid: true,
@@ -322,38 +445,118 @@ export class NfcService {
         },
       });
 
+      const updatedNewNfc = await tx.nfcTag.update({
+        where: {
+          id: newNfc.id,
+        },
+        data: {
+          status: NfcStatus.ACTIVE,
+        },
+        select: {
+          id: true,
+          uid: true,
+          label: true,
+          status: true,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'REPLACE_NFC_TAG',
+        entityType: 'NfcTag',
+        entityId: oldNfc.id,
+        oldData: {
+          uid: oldNfc.uid,
+          label: oldNfc.label,
+          status: oldNfc.status,
+        },
+        newData: {
+          replacedByNfcId: updatedNewNfc.id,
+          replacedByUid: updatedNewNfc.uid,
+          status: replacedOldNfc.status,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'RECEIVE_REPLACEMENT_NFC_TAG',
+        entityType: 'NfcTag',
+        entityId: updatedNewNfc.id,
+        oldData: {
+          uid: newNfc.uid,
+          label: newNfc.label,
+          status: newNfc.status,
+        },
+        newData: {
+          uid: updatedNewNfc.uid,
+          label: updatedNewNfc.label,
+          status: updatedNewNfc.status,
+          replacesNfcId: replacedOldNfc.id,
+        },
+      });
+
       return {
-        oldNfcId: oldNfc.id,
-        newNfc: updated,
+        oldNfcId: replacedOldNfc.id,
+        newNfc: updatedNewNfc,
       };
     });
   }
 
-  async remove(id: string) {
-    const nfc = await this.getByIdOrThrow(id);
+  async remove(id: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const nfc = await tx.nfcTag.findUnique({
+        where: { id },
+      });
 
-    if (nfc.status === NfcStatus.ACTIVE) {
-      throw new ConflictException('NFC yang masih ACTIVE tidak dapat dihapus');
-    }
+      if (!nfc) {
+        throw new NotFoundException('NFC Tag tidak ditemukan');
+      }
 
-    return this.prisma.nfcTag.update({
-      where: {
-        id,
-      },
+      if (nfc.status === NfcStatus.ACTIVE) {
+        throw new ConflictException(
+          'NFC yang masih ACTIVE tidak dapat dihapus',
+        );
+      }
 
-      data: {
-        status: NfcStatus.INACTIVE,
-      },
+      if (nfc.status === NfcStatus.INACTIVE) {
+        return tx.nfcTag.findUniqueOrThrow({
+          where: { id },
+          select: this.detailSelect(),
+        });
+      }
 
-      select: this.detailSelect(),
+      const updated = await tx.nfcTag.update({
+        where: { id },
+        data: {
+          status: NfcStatus.INACTIVE,
+        },
+        select: this.detailSelect(),
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'REMOVE_NFC_TAG',
+        entityType: 'NfcTag',
+        entityId: id,
+        oldData: {
+          uid: nfc.uid,
+          label: nfc.label,
+          status: nfc.status,
+        },
+        newData: {
+          uid: updated.uid,
+          label: updated.label,
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
   private async getByIdOrThrow(id: string) {
     const nfc = await this.prisma.nfcTag.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
     });
 
     if (!nfc) {
@@ -375,7 +578,6 @@ export class NfcService {
       status: true,
       createdAt: true,
       updatedAt: true,
-
       createdBy: {
         select: {
           id: true,
@@ -383,7 +585,6 @@ export class NfcService {
           fullName: true,
         },
       },
-
       _count: {
         select: {
           assignments: true,
@@ -401,7 +602,6 @@ export class NfcService {
       status: true,
       createdAt: true,
       updatedAt: true,
-
       createdBy: {
         select: {
           id: true,
@@ -409,7 +609,6 @@ export class NfcService {
           fullName: true,
         },
       },
-
       assignments: {
         select: {
           id: true,
@@ -417,7 +616,6 @@ export class NfcService {
           assignedAt: true,
           unassignedAt: true,
           status: true,
-
           patrolPoint: {
             select: {
               id: true,
@@ -428,7 +626,6 @@ export class NfcService {
           },
         },
       },
-
       _count: {
         select: {
           assignments: true,

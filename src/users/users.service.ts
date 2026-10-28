@@ -5,12 +5,12 @@ import {
   InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service.js';
-
 import * as bcrypt from 'bcrypt';
+import { AuditLogService } from '../audit/audit.service.js';
 import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { UserStatus } from '../generated/prisma/enums.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { StorageService } from '../storage/storage.service.js';
 import { CreateUserDto } from './dto/create-users.dto.js';
 import { UpdateUserDto } from './dto/update-users.dto.js';
@@ -20,6 +20,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAllUsers() {
@@ -43,7 +44,7 @@ export class UsersService {
 
     return {
       message: 'Data user berhasil ditemukan',
-      data: users,
+      data: users.map((user) => this.sanitizeUser(user)),
     };
   }
 
@@ -64,7 +65,7 @@ export class UsersService {
 
     return {
       message: 'Data user aktif berhasil ditemukan',
-      data: users,
+      data: users.map((user) => this.sanitizeUser(user)),
     };
   }
 
@@ -77,6 +78,7 @@ export class UsersService {
       include: {
         role: true,
         site: true,
+        team: true,
       },
     });
 
@@ -86,7 +88,7 @@ export class UsersService {
 
     return {
       message: 'User berhasil ditemukan',
-      data: user,
+      data: this.sanitizeUser(user),
     };
   }
 
@@ -102,6 +104,7 @@ export class UsersService {
       include: {
         role: true,
         site: true,
+        team: true,
       },
       orderBy: {
         fullName: 'asc',
@@ -197,22 +200,31 @@ export class UsersService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         let teamId: string | null = null;
+        let createdTeam:
+          | {
+              id: string;
+              name: string;
+              code: string;
+            }
+          | undefined;
 
         if (dto.team) {
-          const name = dto.team.name.trim();
-          const code = dto.team.code.trim().toUpperCase();
-
           const team = await tx.team.create({
             data: {
               siteId: dto.siteId!,
-              name,
-              code,
+              name: dto.team.name.trim(),
+              code: dto.team.code.trim().toUpperCase(),
               description: dto.team.description?.trim() || null,
               status: 'ACTIVE',
             },
           });
 
           teamId = team.id;
+          createdTeam = {
+            id: team.id,
+            name: team.name,
+            code: team.code,
+          };
         }
 
         if (dto.teamId) {
@@ -255,6 +267,26 @@ export class UsersService {
           },
         });
 
+        await this.auditLogService.createAudit(tx, {
+          userId: createdById,
+          action: 'CREATE_USER',
+          entityType: 'USER',
+          entityId: user.id,
+          newData: {
+            id: user.id,
+            fullName: user.fullName,
+            username: user.username,
+            email: user.email,
+            employeeNumber: user.employeeNumber,
+            roleId: user.roleId,
+            roleName: user.role.name,
+            siteId: user.siteId,
+            teamId: user.teamId,
+            status: user.status,
+            ...(createdTeam ? { createdTeam } : {}),
+          },
+        });
+
         return this.sanitizeUser(user);
       });
     } catch (error) {
@@ -271,13 +303,16 @@ export class UsersService {
     }
   }
 
-  async updateUser(id: string, dto: UpdateUserDto) {
+  async updateUser(id: string, dto: UpdateUserDto, actorId: string) {
     if (dto.teamId && dto.team) {
       throw new BadRequestException('Pilih teamId atau team, bukan keduanya.');
     }
 
-    const existingUser = await this.prisma.user.findUnique({
-      where: { id },
+    const existingUser = await this.prisma.user.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+      },
       include: {
         role: true,
         site: true,
@@ -353,7 +388,6 @@ export class UsersService {
 
           teamId = team.id;
         } else if (nextSiteId !== existingUser.siteId) {
-          // Jika site berubah, regu lama tidak boleh ikut terbawa.
           teamId = null;
         }
 
@@ -402,6 +436,38 @@ export class UsersService {
           },
         });
 
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'UPDATE_USER',
+          entityType: 'USER',
+          entityId: updatedUser.id,
+          oldData: {
+            fullName: existingUser.fullName,
+            username: existingUser.username,
+            email: existingUser.email,
+            employeeNumber: existingUser.employeeNumber,
+            phone: existingUser.phone,
+            photoUrl: existingUser.photoUrl,
+            roleId: existingUser.roleId,
+            siteId: existingUser.siteId,
+            teamId: existingUser.teamId,
+            status: existingUser.status,
+          },
+          newData: {
+            fullName: updatedUser.fullName,
+            username: updatedUser.username,
+            email: updatedUser.email,
+            employeeNumber: updatedUser.employeeNumber,
+            phone: updatedUser.phone,
+            photoUrl: updatedUser.photoUrl,
+            roleId: updatedUser.roleId,
+            siteId: updatedUser.siteId,
+            teamId: updatedUser.teamId,
+            status: updatedUser.status,
+            passwordChanged: Boolean(passwordHash),
+          },
+        });
+
         return this.sanitizeUser(updatedUser);
       });
     } catch (error) {
@@ -418,7 +484,7 @@ export class UsersService {
     }
   }
 
-  async changeUserPhoto(id: string, file: UploadedFile) {
+  async changeUserPhoto(id: string, file: UploadedFile, actorId: string) {
     const user = await this.prisma.user.findFirst({
       where: {
         id,
@@ -433,15 +499,33 @@ export class UsersService {
     const savedPhoto = await this.storageService.saveUserPhoto(file);
 
     try {
-      const updatedUser = await this.prisma.user.update({
-        where: { id },
-        data: {
-          photoUrl: savedPhoto.url,
-        },
-        include: {
-          role: true,
-          site: true,
-        },
+      const updatedUser = await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: { id },
+          data: {
+            photoUrl: savedPhoto.url,
+          },
+          include: {
+            role: true,
+            site: true,
+            team: true,
+          },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'CHANGE_USER_PHOTO',
+          entityType: 'USER',
+          entityId: id,
+          oldData: {
+            photoUrl: user.photoUrl,
+          },
+          newData: {
+            photoUrl: updated.photoUrl,
+          },
+        });
+
+        return updated;
       });
 
       return {
@@ -453,7 +537,7 @@ export class UsersService {
     }
   }
 
-  async deactivateUser(id: string) {
+  async deactivateUser(id: string, actorId: string) {
     const user = await this.prisma.user.findFirst({
       where: {
         id,
@@ -470,64 +554,116 @@ export class UsersService {
     }
 
     try {
-      const updated = await this.prisma.user.update({
-        where: {
-          id,
-        },
-        data: {
-          status: UserStatus.INACTIVE,
-          deletedAt: new Date(),
-        },
-      });
+      return await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: { id },
+          data: {
+            status: UserStatus.INACTIVE,
+            deletedAt: new Date(),
+          },
+          include: {
+            role: true,
+            site: true,
+            team: true,
+          },
+        });
 
-      return {
-        message: 'User berhasil dinonaktifkan',
-        data: this.sanitizeUser(updated),
-      };
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'DEACTIVATE_USER',
+          entityType: 'USER',
+          entityId: id,
+          oldData: {
+            status: user.status,
+            deletedAt: user.deletedAt?.toISOString() ?? null,
+          },
+          newData: {
+            status: updated.status,
+            deletedAt: updated.deletedAt?.toISOString() ?? null,
+          },
+        });
+
+        return {
+          message: 'User berhasil dinonaktifkan',
+          data: this.sanitizeUser(updated),
+        };
+      });
     } catch (error) {
+      if (error instanceof ConflictException) {
+        throw error;
+      }
+
       throw new InternalServerErrorException('Gagal menonaktifkan user');
     }
   }
 
-  async activateUser(id: string) {
+  async activateUser(id: string, actorId: string) {
     const user = await this.prisma.user.findUnique({
-      where: {
-        id,
-      },
+      where: { id },
     });
 
     if (!user) {
       throw new NotFoundException('User tidak ditemukan');
     }
 
-    if (user.status === UserStatus.ACTIVE) {
+    if (user.status === UserStatus.ACTIVE && user.deletedAt === null) {
       throw new ConflictException('User sudah aktif');
     }
 
     try {
-      const updated = await this.prisma.user.update({
-        where: {
-          id,
-        },
-        data: {
-          status: UserStatus.ACTIVE,
-          deletedAt: null,
-        },
-      });
+      return await this.prisma.$transaction(async (tx) => {
+        const updated = await tx.user.update({
+          where: { id },
+          data: {
+            status: UserStatus.ACTIVE,
+            deletedAt: null,
+          },
+          include: {
+            role: true,
+            site: true,
+            team: true,
+          },
+        });
 
-      return {
-        message: 'User berhasil diaktifkan',
-        data: this.sanitizeUser(updated),
-      };
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'ACTIVATE_USER',
+          entityType: 'USER',
+          entityId: id,
+          oldData: {
+            status: user.status,
+            deletedAt: user.deletedAt?.toISOString() ?? null,
+          },
+          newData: {
+            status: updated.status,
+            deletedAt: updated.deletedAt?.toISOString() ?? null,
+          },
+        });
+
+        return {
+          message: 'User berhasil diaktifkan',
+          data: this.sanitizeUser(updated),
+        };
+      });
     } catch (error) {
+      if (
+        error instanceof ConflictException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+
       throw new InternalServerErrorException('Gagal mengaktifkan user');
     }
   }
 
-  async removeUser(id: string) {
+  async removeUser(id: string, actorId: string) {
     const user = await this.prisma.user.findUnique({
-      where: {
-        id,
+      where: { id },
+      include: {
+        role: true,
+        site: true,
+        team: true,
       },
     });
 
@@ -536,16 +672,38 @@ export class UsersService {
     }
 
     try {
-      await this.prisma.user.delete({
-        where: {
-          id,
-        },
+      await this.prisma.$transaction(async (tx) => {
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'DELETE_USER',
+          entityType: 'USER',
+          entityId: id,
+          oldData: {
+            id: user.id,
+            fullName: user.fullName,
+            username: user.username,
+            email: user.email,
+            employeeNumber: user.employeeNumber,
+            roleId: user.roleId,
+            siteId: user.siteId,
+            teamId: user.teamId,
+            status: user.status,
+            deletedAt: user.deletedAt?.toISOString() ?? null,
+          },
+          newData: {
+            deleted: true,
+          },
+        });
+
+        await tx.user.delete({
+          where: { id },
+        });
       });
 
       return {
         message: 'User berhasil dihapus permanen',
       };
-    } catch (error: any) {
+    } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2003'
@@ -555,13 +713,21 @@ export class UsersService {
         );
       }
 
+      if (
+        error instanceof ConflictException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+
       throw new InternalServerErrorException('Gagal menghapus user');
     }
   }
 
-  private sanitizeUser(user: any) {
+  private sanitizeUser<T extends { passwordHash?: string | null }>(
+    user: T,
+  ): Omit<T, 'passwordHash'> {
     const { passwordHash, ...safeUser } = user;
-
     return safeUser;
   }
 }

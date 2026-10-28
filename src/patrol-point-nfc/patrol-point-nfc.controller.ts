@@ -80,7 +80,7 @@ export class PatrolPointNfcController {
 
     @CurrentUser() user: User,
   ) {
-    return this.service.replace(id, dto);
+    return this.service.replace(id, dto, user.id);
   }
 
   @Delete(':id')
@@ -89,7 +89,8 @@ export class PatrolPointNfcController {
 
     @Body()
     dto: RemoveNfcAssignmentDto,
+    @CurrentUser() user: User,
   ) {
-    return this.service.remove(id, dto);
+    return this.service.remove(id, dto, user.id);
   }
 }

@@ -6,6 +6,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { AuditLogService } from '../../audit/audit.service.js';
 import {
   PatrolCheckpointStatus,
   PatrolRoundStatus,
@@ -15,11 +16,15 @@ import { ReorderRoundCheckpointsDto } from '../dto/reorder.round.checkpoints.dto
 
 @Injectable()
 export class PatrolRoundService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async reorderRoundCheckpoints(
     roundId: string,
     dto: ReorderRoundCheckpointsDto,
+    adminId: string,
   ) {
     return this.prisma.$transaction(
       async (tx) => {
@@ -32,6 +37,16 @@ export class PatrolRoundService {
                 id: true,
                 sequence: true,
                 status: true,
+              },
+            },
+            assignment: {
+              include: {
+                schedule: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
               },
             },
           },
@@ -63,15 +78,18 @@ export class PatrolRoundService {
         }
 
         for (const checkpoint of round.checkpoints) {
-          if (checkpoint.status !== 'PENDING') {
+          if (checkpoint.status !== PatrolCheckpointStatus.PENDING) {
             throw new ConflictException(
               'Ronde memiliki checkpoint yang bukan PENDING',
             );
           }
         }
 
-        // Hindari konflik unique constraint pada sequence
-        // selama proses pertukaran urutan.
+        const oldOrder = round.checkpoints.map((checkpoint) => ({
+          checkpointId: checkpoint.id,
+          sequence: checkpoint.sequence,
+        }));
+
         const temporaryOffset = round.checkpoints.length;
 
         for (const checkpoint of round.checkpoints) {
@@ -98,6 +116,30 @@ export class PatrolRoundService {
             checkpoints: {
               orderBy: { sequence: 'asc' },
             },
+          },
+        });
+
+        const newOrder = updated.checkpoints.map((checkpoint) => ({
+          checkpointId: checkpoint.id,
+          sequence: checkpoint.sequence,
+        }));
+
+        await this.auditLogService.createAudit(tx, {
+          userId: adminId,
+          action: 'REORDER_ROUND_CHECKPOINTS',
+          entityType: 'PatrolRound',
+          entityId: roundId,
+          oldData: {
+            status: round.status,
+            scheduleId: round.assignment.schedule.id,
+            scheduleName: round.assignment.schedule.name,
+            checkpoints: oldOrder,
+          },
+          newData: {
+            status: updated.status,
+            scheduleId: round.assignment.schedule.id,
+            scheduleName: round.assignment.schedule.name,
+            checkpoints: newOrder,
           },
         });
 

@@ -60,26 +60,30 @@ export class PatrolScheduleController {
 
   @Patch(':id')
   @Roles(RoleName.ADMIN)
-  update(@Param('id') id: string, @Body() dto: UpdatePatrolScheduleDto) {
-    return this.service.update(id, dto);
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdatePatrolScheduleDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.service.update(id, dto, user.id);
   }
 
   @Post(':id/activate')
   @Roles(RoleName.ADMIN)
-  activate(@Param('id') id: string) {
-    return this.service.activate(id);
+  activate(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.service.activate(id, user.id);
   }
 
   @Post(':id/archive')
   @Roles(RoleName.ADMIN)
-  archive(@Param('id') id: string) {
-    return this.service.archive(id);
+  archive(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.service.archive(id, user.id);
   }
 
   @Delete(':id')
   @Roles(RoleName.ADMIN)
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  remove(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.service.remove(id, user.id);
   }
 
   /**
@@ -122,7 +126,13 @@ export class PatrolScheduleController {
   async updateAssignment(
     @Param('assignmentId') assignmentId: string,
     @Body() dto: UpdateAssignmentDto,
+    @CurrentUser() user: User,
   ) {
-    return this.service.updateAssignment(assignmentId, dto.endDate, dto.status);
+    return this.service.updateAssignment(
+      assignmentId,
+      user.id,
+      dto.endDate,
+      dto.status,
+    );
   }
 }

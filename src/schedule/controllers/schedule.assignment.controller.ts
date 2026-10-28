@@ -64,7 +64,8 @@ export class PatrolScheduleAssignmentController {
   remove(
     @Param('scheduleId') scheduleId: string,
     @Param('assignmentId') assignmentId: string,
+    @CurrentUser() user: User,
   ) {
-    return this.service.remove(scheduleId, assignmentId);
+    return this.service.remove(scheduleId, assignmentId, user.id);
   }
 }

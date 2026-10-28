@@ -3,6 +3,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+
+import { AuditLogService } from '../audit/audit.service.js';
 import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { Prisma } from '../generated/prisma/client.js';
 import { FindingStatus } from '../generated/prisma/enums.js';
@@ -19,6 +21,7 @@ export class FindingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(dto: CreateFindingDto, userId: string) {
@@ -55,17 +58,36 @@ export class FindingsService {
       throw new BadRequestException('Patrol point tidak aktif');
     }
 
-    return this.prisma.finding.create({
-      data: {
-        patrolId: dto.patrolId,
-        patrolPointId: dto.patrolPointId,
-        reportedById: userId,
-        title: dto.title.trim(),
-        description: dto.description.trim(),
-        severity: dto.severity,
-        status: FindingStatus.OPEN,
-      },
-      include: this.detailInclude,
+    return this.prisma.$transaction(async (tx) => {
+      const finding = await tx.finding.create({
+        data: {
+          patrolId: dto.patrolId,
+          patrolPointId: dto.patrolPointId,
+          reportedById: userId,
+          title: dto.title.trim(),
+          description: dto.description.trim(),
+          severity: dto.severity,
+          status: FindingStatus.OPEN,
+        },
+        include: this.detailInclude,
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'CREATE_FINDING',
+        entityType: 'Finding',
+        entityId: finding.id,
+        newData: {
+          patrolId: finding.patrolId,
+          patrolPointId: finding.patrolPointId,
+          title: finding.title,
+          severity: finding.severity,
+          status: finding.status,
+          reportedById: finding.reportedById,
+        },
+      });
+
+      return finding;
     });
   }
 
@@ -94,7 +116,6 @@ export class FindingsService {
       ...(user.role.name !== 'ADMIN' && {
         reportedById: user.id,
       }),
-
       ...(query.status && { status: query.status }),
       ...(query.severity && { severity: query.severity }),
       ...(query.patrolId && { patrolId: query.patrolId }),
@@ -138,137 +159,218 @@ export class FindingsService {
     return finding;
   }
 
-  async update(id: string, dto: UpdateFindingDto) {
-    const finding = await this.prisma.finding.findUnique({
-      where: { id },
-    });
+  async update(id: string, dto: UpdateFindingDto, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const finding = await tx.finding.findUnique({
+        where: { id },
+      });
 
-    if (!finding) {
-      throw new NotFoundException('Finding tidak ditemukan');
-    }
+      if (!finding) {
+        throw new NotFoundException('Finding tidak ditemukan');
+      }
 
-    if (finding.status === FindingStatus.RESOLVED) {
-      throw new BadRequestException(
-        'Finding yang sudah RESOLVED tidak dapat diubah',
-      );
-    }
+      if (finding.status === FindingStatus.RESOLVED) {
+        throw new BadRequestException(
+          'Finding yang sudah RESOLVED tidak dapat diubah',
+        );
+      }
 
-    return this.prisma.finding.update({
-      where: { id },
-      data: {
-        ...(dto.title !== undefined && {
-          title: dto.title.trim(),
-        }),
-        ...(dto.description !== undefined && {
-          description: dto.description.trim(),
-        }),
-        ...(dto.severity !== undefined && {
-          severity: dto.severity,
-        }),
-      },
-      include: this.detailInclude,
+      const updated = await tx.finding.update({
+        where: { id },
+        data: {
+          ...(dto.title !== undefined && {
+            title: dto.title.trim(),
+          }),
+          ...(dto.description !== undefined && {
+            description: dto.description.trim(),
+          }),
+          ...(dto.severity !== undefined && {
+            severity: dto.severity,
+          }),
+        },
+        include: this.detailInclude,
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'UPDATE_FINDING',
+        entityType: 'Finding',
+        entityId: id,
+        oldData: {
+          title: finding.title,
+          description: finding.description,
+          severity: finding.severity,
+          status: finding.status,
+        },
+        newData: {
+          title: updated.title,
+          description: updated.description,
+          severity: updated.severity,
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async start(id: string) {
-    const finding = await this.prisma.finding.findUnique({
-      where: { id },
-    });
+  async start(id: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const finding = await tx.finding.findUnique({
+        where: { id },
+      });
 
-    if (!finding) {
-      throw new NotFoundException('Finding tidak ditemukan');
-    }
+      if (!finding) {
+        throw new NotFoundException('Finding tidak ditemukan');
+      }
 
-    if (finding.status !== FindingStatus.OPEN) {
-      throw new BadRequestException('Hanya finding OPEN yang dapat dimulai');
-    }
+      if (finding.status !== FindingStatus.OPEN) {
+        throw new BadRequestException('Hanya finding OPEN yang dapat dimulai');
+      }
 
-    return this.prisma.finding.update({
-      where: { id },
-      data: {
-        status: FindingStatus.IN_PROGRESS,
-      },
-      include: this.detailInclude,
+      const updated = await tx.finding.update({
+        where: { id },
+        data: {
+          status: FindingStatus.IN_PROGRESS,
+        },
+        include: this.detailInclude,
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'START_FINDING',
+        entityType: 'Finding',
+        entityId: id,
+        oldData: {
+          status: finding.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async assign(id: string, dto: AssignFindingDto) {
-    const finding = await this.prisma.finding.findUnique({
-      where: { id },
-    });
+  async assign(id: string, dto: AssignFindingDto, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const finding = await tx.finding.findUnique({
+        where: { id },
+      });
 
-    if (!finding) {
-      throw new NotFoundException('Finding tidak ditemukan');
-    }
+      if (!finding) {
+        throw new NotFoundException('Finding tidak ditemukan');
+      }
 
-    if (finding.status === FindingStatus.RESOLVED) {
-      throw new BadRequestException(
-        'Finding yang sudah selesai tidak dapat ditugaskan',
-      );
-    }
+      if (finding.status === FindingStatus.RESOLVED) {
+        throw new BadRequestException(
+          'Finding yang sudah selesai tidak dapat ditugaskan',
+        );
+      }
 
-    const user = await this.prisma.user.findUnique({
-      where: {
-        id: dto.assignedTo,
-      },
-      select: {
-        id: true,
-        status: true,
-      },
-    });
+      const user = await tx.user.findUnique({
+        where: {
+          id: dto.assignedTo,
+        },
+        select: {
+          id: true,
+          status: true,
+        },
+      });
 
-    if (!user) {
-      throw new NotFoundException('User tidak ditemukan');
-    }
+      if (!user) {
+        throw new NotFoundException('User tidak ditemukan');
+      }
 
-    if (user.status !== 'ACTIVE') {
-      throw new BadRequestException('User tidak aktif');
-    }
+      if (user.status !== 'ACTIVE') {
+        throw new BadRequestException('User tidak aktif');
+      }
 
-    return this.prisma.finding.update({
-      where: { id },
-      data: {
-        assignedToId: dto.assignedTo,
-        status:
-          finding.status === FindingStatus.OPEN
-            ? FindingStatus.IN_PROGRESS
-            : finding.status,
-      },
-      include: this.detailInclude,
+      const updated = await tx.finding.update({
+        where: { id },
+        data: {
+          assignedToId: dto.assignedTo,
+          status:
+            finding.status === FindingStatus.OPEN
+              ? FindingStatus.IN_PROGRESS
+              : finding.status,
+        },
+        include: this.detailInclude,
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'ASSIGN_FINDING',
+        entityType: 'Finding',
+        entityId: id,
+        oldData: {
+          assignedToId: finding.assignedToId,
+          status: finding.status,
+        },
+        newData: {
+          assignedToId: updated.assignedToId,
+          status: updated.status,
+        },
+      });
+
+      return updated;
     });
   }
 
   async resolve(id: string, dto: ResolveFindingDto, userId: string) {
-    const finding = await this.prisma.finding.findUnique({
-      where: { id },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const finding = await tx.finding.findUnique({
+        where: { id },
+      });
 
-    if (!finding) {
-      throw new NotFoundException('Finding tidak ditemukan');
-    }
+      if (!finding) {
+        throw new NotFoundException('Finding tidak ditemukan');
+      }
 
-    if (
-      finding.status !== FindingStatus.OPEN &&
-      finding.status !== FindingStatus.IN_PROGRESS
-    ) {
-      throw new BadRequestException(
-        'Finding tidak dapat di-resolve pada status saat ini',
-      );
-    }
+      if (
+        finding.status !== FindingStatus.OPEN &&
+        finding.status !== FindingStatus.IN_PROGRESS
+      ) {
+        throw new BadRequestException(
+          'Finding tidak dapat di-resolve pada status saat ini',
+        );
+      }
 
-    return this.prisma.finding.update({
-      where: { id },
-      data: {
-        status: FindingStatus.RESOLVED,
-        resolvedById: userId,
-        resolvedAt: new Date(),
-        resolutionNote: dto.resolutionNote.trim(),
-      },
-      include: this.detailInclude,
+      const updated = await tx.finding.update({
+        where: { id },
+        data: {
+          status: FindingStatus.RESOLVED,
+          resolvedById: userId,
+          resolvedAt: new Date(),
+          resolutionNote: dto.resolutionNote.trim(),
+        },
+        include: this.detailInclude,
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId,
+        action: 'RESOLVE_FINDING',
+        entityType: 'Finding',
+        entityId: id,
+        oldData: {
+          status: finding.status,
+          resolvedById: finding.resolvedById,
+          resolutionNote: finding.resolutionNote,
+        },
+        newData: {
+          status: updated.status,
+          resolvedById: updated.resolvedById,
+          resolutionNote: updated.resolutionNote,
+          resolvedAt: updated.resolvedAt?.toISOString() ?? null,
+        },
+      });
+
+      return updated;
     });
   }
 
-  async addPhoto(findingId: string, file: UploadedFile) {
+  async addPhoto(findingId: string, file: UploadedFile, actorId: string) {
     const finding = await this.prisma.finding.findUnique({
       where: {
         id: findingId,
@@ -309,41 +411,95 @@ export class FindingsService {
 
     const uploadedFile = await this.storageService.saveImage(file);
 
-    const photo = await this.prisma.findingPhoto.create({
-      data: {
-        findingId,
+    return this.prisma.$transaction(async (tx) => {
+      const currentFinding = await tx.finding.findUnique({
+        where: {
+          id: findingId,
+        },
+        select: {
+          id: true,
+          status: true,
+        },
+      });
 
-        fileUrl: uploadedFile.url,
-        fileName: file.originalname,
-        mimeType: file.mimetype,
-        fileSize: file.size,
-      },
+      if (!currentFinding) {
+        throw new NotFoundException({
+          code: 'FINDING_NOT_FOUND',
+          message: 'Finding tidak ditemukan',
+        });
+      }
+
+      if (currentFinding.status === FindingStatus.RESOLVED) {
+        throw new BadRequestException({
+          code: 'FINDING_ALREADY_RESOLVED',
+          message:
+            'Tidak dapat menambahkan foto ke finding yang sudah RESOLVED',
+        });
+      }
+
+      const photo = await tx.findingPhoto.create({
+        data: {
+          findingId,
+          fileUrl: uploadedFile.url,
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+          fileSize: file.size,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'ADD_FINDING_PHOTO',
+        entityType: 'FindingPhoto',
+        entityId: photo.id,
+        newData: {
+          findingId,
+          fileName: photo.fileName,
+          mimeType: photo.mimeType,
+          fileSize: photo.fileSize,
+        },
+      });
+
+      return photo;
     });
-
-    return photo;
   }
 
-  async removePhoto(findingId: string, photoId: string) {
-    const photo = await this.prisma.findingPhoto.findFirst({
-      where: {
-        id: photoId,
-        findingId,
-      },
+  async removePhoto(findingId: string, photoId: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const photo = await tx.findingPhoto.findFirst({
+        where: {
+          id: photoId,
+          findingId,
+        },
+      });
+
+      if (!photo) {
+        throw new NotFoundException('Foto finding tidak ditemukan');
+      }
+
+      await tx.findingPhoto.delete({
+        where: {
+          id: photoId,
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: actorId,
+        action: 'REMOVE_FINDING_PHOTO',
+        entityType: 'FindingPhoto',
+        entityId: photoId,
+        oldData: {
+          findingId: photo.findingId,
+          fileName: photo.fileName,
+          mimeType: photo.mimeType,
+          fileSize: photo.fileSize,
+        },
+      });
+
+      return {
+        message: 'Foto berhasil dihapus',
+      };
     });
-
-    if (!photo) {
-      throw new NotFoundException('Foto finding tidak ditemukan');
-    }
-
-    await this.prisma.findingPhoto.delete({
-      where: {
-        id: photoId,
-      },
-    });
-
-    return {
-      message: 'Foto berhasil dihapus',
-    };
   }
 
   private readonly detailInclude = {
@@ -368,13 +524,6 @@ export class FindingsService {
         fullName: true,
       },
     },
-    // user: {
-    //   select: {
-    //     id: true,
-    //     username: true,
-    //     fullName: true,
-    //   },
-    // },
     patrolPoint: {
       select: {
         id: true,

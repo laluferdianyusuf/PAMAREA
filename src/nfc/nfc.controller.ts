@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
+import { Roles } from '../common/decorators/roles.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import type { User } from '../generated/prisma/client.js';
 import { NfcStatus } from '../generated/prisma/enums.js';
@@ -50,37 +51,52 @@ export class NfcController {
   }
 
   @Patch(':id')
-  update(@Param('id') id: string, @Body() dto: UpdateNfcTagDto) {
-    return this.nfcService.update(id, dto);
+  @Roles('ADMIN')
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateNfcTagDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.nfcService.update(id, dto, user.id);
   }
 
   @Patch(':id/activate')
-  activate(@Param('id') id: string) {
-    return this.nfcService.activate(id);
+  @Roles('ADMIN')
+  activate(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.nfcService.activate(id, user.id);
   }
 
   @Patch(':id/deactivate')
-  deactivate(@Param('id') id: string) {
-    return this.nfcService.deactivate(id);
+  @Roles('ADMIN')
+  deactivate(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.nfcService.deactivate(id, user.id);
   }
 
   @Patch(':id/damaged')
-  markDamaged(@Param('id') id: string) {
-    return this.nfcService.markDamaged(id);
+  @Roles('ADMIN')
+  markDamaged(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.nfcService.markDamaged(id, user.id);
   }
 
   @Patch(':id/lost')
-  markLost(@Param('id') id: string) {
-    return this.nfcService.markLost(id);
+  @Roles('ADMIN')
+  markLost(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.nfcService.markLost(id, user.id);
   }
 
   @Post(':id/replace')
-  replace(@Param('id') id: string, @Body() dto: ReplaceNfcTagDto) {
-    return this.nfcService.replace(id, dto);
+  @Roles('ADMIN')
+  replace(
+    @Param('id') id: string,
+    @Body() dto: ReplaceNfcTagDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.nfcService.replace(id, dto, user.id);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.nfcService.remove(id);
+  @Roles('ADMIN')
+  remove(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.nfcService.remove(id, user.id);
   }
 }
