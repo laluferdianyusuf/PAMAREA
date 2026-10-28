@@ -121,19 +121,45 @@ export class QuestionsService {
         break;
     }
 
-    return this.prisma.question.create({
-      data: {
-        code,
-        questionText: dto.questionText.trim(),
-        questionType: dto.questionType,
-        isRequired: dto.isRequired ?? true,
-        photoRequirement: dto.photoRequirement ?? 'REQUIRED',
-        createdById,
-        options: {
-          create: options,
+    return this.prisma.$transaction(async (tx) => {
+      const question = await tx.question.create({
+        data: {
+          code,
+          questionText: dto.questionText.trim(),
+          questionType: dto.questionType,
+          isRequired: dto.isRequired ?? true,
+          photoRequirement: dto.photoRequirement ?? 'REQUIRED',
+          createdById,
+          options: {
+            create: options,
+          },
         },
-      },
-      include: this.questionInclude(),
+      });
+
+      const patrolPoints = await tx.patrolPoint.findMany({
+        select: {
+          id: true,
+        },
+      });
+
+      if (patrolPoints.length > 0) {
+        await tx.pointQuestion.createMany({
+          data: patrolPoints.map((point, index) => ({
+            patrolPointId: point.id,
+            questionId: question.id,
+            createdById,
+            sortOrder: index + 1,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      return tx.question.findUniqueOrThrow({
+        where: {
+          id: question.id,
+        },
+        include: this.questionInclude(),
+      });
     });
   }
 

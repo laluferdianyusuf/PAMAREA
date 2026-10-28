@@ -696,7 +696,7 @@ export class PatrolsService {
   async submitAnswers(patrolId: string, userId: string, dto: SubmitAnswersDto) {
     const patrol = await this.getPatrolForMutation(patrolId, userId);
 
-    this.ensureValidationComplete(patrol);
+    // this.ensureValidationComplete(patrol);
 
     const pointQuestions = await this.prisma.pointQuestion.findMany({
       where: {
@@ -829,7 +829,7 @@ export class PatrolsService {
   ) {
     const patrol = await this.getPatrolForMutation(patrolId, userId);
 
-    this.ensureValidationComplete(patrol);
+    // this.ensureValidationComplete(patrol);
 
     if (!file) {
       throw new BadRequestException({
@@ -907,7 +907,7 @@ export class PatrolsService {
   async submitPatrol(patrolId: string, userId: string) {
     const patrol = await this.getPatrolForMutation(patrolId, userId);
 
-    this.ensureValidationComplete(patrol);
+    // this.ensureValidationComplete(patrol);
 
     await this.validateRequiredAnswers(patrolId, patrol.patrolPointId);
     await this.validateRequiredPhotos(patrolId, patrol.patrolPointId);

@@ -310,10 +310,19 @@ export class EmergencyService {
     const preparedAt = new Date().toISOString();
 
     const payload: MulticastMessage = {
-      tokens,
+      tokens: [],
+      notification: {
+        title: 'DARURAT SOS PAMAREA',
+        body: `${senderName} mengirim peringatan darurat. Segera periksa.`,
+      },
       android: {
         priority: 'high',
         ttl: 60 * 1000,
+        notification: {
+          channelId: 'emergency_channel_v2',
+          priority: 'max',
+          visibility: 'public',
+        },
       },
       data: {
         type: 'EMERGENCY_ALERT',
@@ -334,6 +343,7 @@ export class EmergencyService {
 
     for (let i = 0; i < tokens.length; i += 500) {
       const batch = tokens.slice(i, i + 500);
+      const batchStartedAt = Date.now();
 
       const response = await getMessaging().sendEachForMulticast({
         ...payload,
@@ -343,10 +353,18 @@ export class EmergencyService {
       successCount += response.successCount;
       failureCount += response.failureCount;
 
+      console.log('[SOS BACKEND] Batch result:', {
+        batchSize: batch.length,
+        successCount: response.successCount,
+        failureCount: response.failureCount,
+        durationMs: Date.now() - batchStartedAt,
+      });
+
       response.responses.forEach((result, index) => {
         if (!result.success) {
           console.error('[SOS BACKEND] FCM gagal:', {
             tokenIndex: i + index,
+            errorCode: result.error?.code,
             error: result.error?.message,
           });
         }
@@ -354,7 +372,6 @@ export class EmergencyService {
     }
 
     console.log('[SOS BACKEND] FCM result:', {
-      senderName,
       preparedAt,
       completedAt: new Date().toISOString(),
       totalDevices: tokens.length,
