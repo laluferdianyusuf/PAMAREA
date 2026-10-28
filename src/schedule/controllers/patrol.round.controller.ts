@@ -50,7 +50,7 @@ export class PatrolRoundController {
   }
 
   @Get('all/grouped-by-user')
-  async getAllRoundsGroupedByUser() {
+  getAllRoundsGroupedByUser() {
     return this.service.getAllRoundsGroupedByUser();
   }
 
