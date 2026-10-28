@@ -344,9 +344,17 @@ export class PatrolRoundService {
 
   async getAllRoundsGroupedByUser() {
     const rounds = await this.prisma.patrolRound.findMany({
-      include: {
+      select: {
+        id: true,
+        roundNumber: true,
+        status: true,
+        scheduledStartAt: true,
+        scheduledEndAt: true,
+        startedAt: true,
+        completedAt: true,
+
         assignment: {
-          include: {
+          select: {
             user: {
               select: {
                 id: true,
@@ -356,30 +364,45 @@ export class PatrolRoundService {
               },
             },
             schedule: {
-              include: {
-                site: true,
+              select: {
+                id: true,
+                name: true,
+                site: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
               },
             },
           },
         },
-        scheduleDate: true,
+
+        scheduleDate: {
+          select: {
+            id: true,
+            date: true,
+            status: true,
+          },
+        },
+
         checkpoints: {
-          include: {
-            patrolPoint: true,
+          select: {
+            id: true,
+            sequence: true,
+            required: true,
+            status: true,
+            pointCodeSnapshot: true,
+            pointNameSnapshot: true,
+            visitedAt: true,
           },
           orderBy: {
             sequence: 'asc',
           },
         },
       },
-      orderBy: [
-        {
-          scheduledStartAt: 'desc',
-        },
-        {
-          roundNumber: 'asc',
-        },
-      ],
+
+      orderBy: [{ scheduledStartAt: 'desc' }, { roundNumber: 'asc' }],
     });
 
     type Round = (typeof rounds)[number];
@@ -394,22 +417,27 @@ export class PatrolRoundService {
 
     for (const round of rounds) {
       const user = round.assignment.user;
-      const userId = user.id;
 
-      if (!grouped.has(userId)) {
-        grouped.set(userId, {
+      if (!grouped.has(user.id)) {
+        grouped.set(user.id, {
           user,
           rounds: [],
         });
       }
 
-      grouped.get(userId)!.rounds.push(round);
+      grouped.get(user.id)!.rounds.push(round);
     }
 
     return {
       totalUsers: grouped.size,
       totalRounds: rounds.length,
-      data: Array.from(grouped.values()),
+      data: Array.from(grouped.values()).map(({ user, rounds }) => ({
+        user,
+        rounds: rounds.map(({ assignment, ...round }) => ({
+          ...round,
+          schedule: assignment.schedule,
+        })),
+      })),
     };
   }
 
