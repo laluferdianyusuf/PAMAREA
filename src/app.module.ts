@@ -19,6 +19,7 @@ import { RolesModule } from './roles/roles.module.js';
 import { PatrolScheduleModule } from './schedule/patrol.schedule.module.js';
 import { SitesModule } from './sites/sites.module.js';
 import { StorageModule } from './storage/storage.module.js';
+import { TeamModule } from './team/team.module.js';
 import { DeviceModule } from './user-device/user.device.module.js';
 import { UsersModule } from './users/users.module.js';
 
@@ -31,8 +32,10 @@ import { UsersModule } from './users/users.module.js';
     PrismaModule,
 
     AuditLogModule,
+
     AuthModule,
 
+    TeamModule,
     UsersModule,
 
     SitesModule,
