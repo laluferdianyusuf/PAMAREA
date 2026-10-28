@@ -342,6 +342,77 @@ export class PatrolRoundService {
     };
   }
 
+  async getAllRoundsGroupedByUser() {
+    const rounds = await this.prisma.patrolRound.findMany({
+      include: {
+        assignment: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                employeeNumber: true,
+                fullName: true,
+                username: true,
+              },
+            },
+            schedule: {
+              include: {
+                site: true,
+              },
+            },
+          },
+        },
+        scheduleDate: true,
+        checkpoints: {
+          include: {
+            patrolPoint: true,
+          },
+          orderBy: {
+            sequence: 'asc',
+          },
+        },
+      },
+      orderBy: [
+        {
+          scheduledStartAt: 'desc',
+        },
+        {
+          roundNumber: 'asc',
+        },
+      ],
+    });
+
+    type Round = (typeof rounds)[number];
+
+    const grouped = new Map<
+      string,
+      {
+        user: Round['assignment']['user'];
+        rounds: Round[];
+      }
+    >();
+
+    for (const round of rounds) {
+      const user = round.assignment.user;
+      const userId = user.id;
+
+      if (!grouped.has(userId)) {
+        grouped.set(userId, {
+          user,
+          rounds: [],
+        });
+      }
+
+      grouped.get(userId)!.rounds.push(round);
+    }
+
+    return {
+      totalUsers: grouped.size,
+      totalRounds: rounds.length,
+      data: Array.from(grouped.values()),
+    };
+  }
+
   async getRounds(userId: string, date?: string) {
     await this.syncOverdueRounds();
     const dateKey = date ?? this.getTodayDateKey();

@@ -49,6 +49,11 @@ export class PatrolRoundController {
     return this.service.getRounds(user.id, date);
   }
 
+  @Get('all/grouped-by-user')
+  async getAllRoundsGroupedByUser() {
+    return this.service.getAllRoundsGroupedByUser();
+  }
+
   @Get('users/:userId/rounds')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN')
