@@ -15,6 +15,83 @@ import { StorageService } from '../storage/storage.service.js';
 import { CreateUserDto } from './dto/create-users.dto.js';
 import { UpdateUserDto } from './dto/update-users.dto.js';
 
+const userListSelect = {
+  id: true,
+  roleId: true,
+  siteId: true,
+  teamId: true,
+  employeeNumber: true,
+  fullName: true,
+  username: true,
+  email: true,
+  phone: true,
+  photoUrl: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  role: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+  site: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+    },
+  },
+  team: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+    },
+  },
+} satisfies Prisma.UserSelect;
+
+const userDetailSelect = {
+  id: true,
+  roleId: true,
+  siteId: true,
+  teamId: true,
+  createdById: true,
+  employeeNumber: true,
+  fullName: true,
+  username: true,
+  email: true,
+  phone: true,
+  photoUrl: true,
+  status: true,
+  createdAt: true,
+  updatedAt: true,
+  role: {
+    select: {
+      id: true,
+      name: true,
+      description: true,
+    },
+  },
+  site: {
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      address: true,
+    },
+  },
+  team: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      description: true,
+      status: true,
+    },
+  },
+} satisfies Prisma.UserSelect;
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -28,9 +105,8 @@ export class UsersService {
       where: {
         deletedAt: null,
       },
-      include: {
-        role: true,
-        site: true,
+      select: {
+        ...userListSelect,
         scheduleAssignments: {
           select: {
             id: true,
@@ -44,7 +120,7 @@ export class UsersService {
 
     return {
       message: 'Data user berhasil ditemukan',
-      data: users.map((user) => this.sanitizeUser(user)),
+      data: users,
     };
   }
 
@@ -54,10 +130,7 @@ export class UsersService {
         status: UserStatus.ACTIVE,
         deletedAt: null,
       },
-      include: {
-        role: true,
-        site: true,
-      },
+      select: userListSelect,
       orderBy: {
         fullName: 'asc',
       },
@@ -65,7 +138,7 @@ export class UsersService {
 
     return {
       message: 'Data user aktif berhasil ditemukan',
-      data: users.map((user) => this.sanitizeUser(user)),
+      data: users,
     };
   }
 
@@ -75,11 +148,7 @@ export class UsersService {
         id,
         deletedAt: null,
       },
-      include: {
-        role: true,
-        site: true,
-        team: true,
-      },
+      select: userDetailSelect,
     });
 
     if (!user) {
@@ -88,7 +157,7 @@ export class UsersService {
 
     return {
       message: 'User berhasil ditemukan',
-      data: this.sanitizeUser(user),
+      data: user,
     };
   }
 
@@ -101,11 +170,7 @@ export class UsersService {
         status: UserStatus.ACTIVE,
         deletedAt: null,
       },
-      include: {
-        role: true,
-        site: true,
-        team: true,
-      },
+      select: userListSelect,
       orderBy: {
         fullName: 'asc',
       },
@@ -113,7 +178,7 @@ export class UsersService {
 
     return {
       message: 'Data satpam aktif berhasil ditemukan',
-      data: users.map((user) => this.sanitizeUser(user)),
+      data: users,
     };
   }
 
@@ -159,7 +224,13 @@ export class UsersService {
     }
 
     const role = await this.prisma.role.findUnique({
-      where: { id: dto.roleId },
+      where: {
+        id: dto.roleId,
+      },
+      select: {
+        id: true,
+        name: true,
+      },
     });
 
     if (!role) {
@@ -188,6 +259,9 @@ export class UsersService {
           id: dto.siteId,
           status: 'ACTIVE',
         },
+        select: {
+          id: true,
+        },
       });
 
       if (!site) {
@@ -200,6 +274,7 @@ export class UsersService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         let teamId: string | null = null;
+
         let createdTeam:
           | {
               id: string;
@@ -217,14 +292,15 @@ export class UsersService {
               description: dto.team.description?.trim() || null,
               status: 'ACTIVE',
             },
+            select: {
+              id: true,
+              name: true,
+              code: true,
+            },
           });
 
           teamId = team.id;
-          createdTeam = {
-            id: team.id,
-            name: team.name,
-            code: team.code,
-          };
+          createdTeam = team;
         }
 
         if (dto.teamId) {
@@ -233,6 +309,9 @@ export class UsersService {
               id: dto.teamId,
               siteId: dto.siteId!,
               status: 'ACTIVE',
+            },
+            select: {
+              id: true,
             },
           });
 
@@ -257,13 +336,18 @@ export class UsersService {
             phone: dto.phone ?? null,
             passwordHash,
             photoUrl: dto.photoUrl ?? null,
-            status: 'ACTIVE',
+            status: UserStatus.ACTIVE,
             teamId,
           },
-          include: {
-            role: true,
-            site: true,
-            team: true,
+          select: {
+            ...userDetailSelect,
+            role: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+              },
+            },
           },
         });
 
@@ -287,7 +371,7 @@ export class UsersService {
           },
         });
 
-        return this.sanitizeUser(user);
+        return user;
       });
     } catch (error) {
       if (
@@ -313,10 +397,25 @@ export class UsersService {
         id,
         deletedAt: null,
       },
-      include: {
-        role: true,
-        site: true,
-        team: true,
+      select: {
+        id: true,
+        roleId: true,
+        siteId: true,
+        teamId: true,
+        fullName: true,
+        username: true,
+        email: true,
+        employeeNumber: true,
+        phone: true,
+        photoUrl: true,
+        status: true,
+        deletedAt: true,
+        role: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
       },
     });
 
@@ -332,7 +431,13 @@ export class UsersService {
       nextRoleId === existingUser.roleId
         ? existingUser.role
         : await this.prisma.role.findUnique({
-            where: { id: nextRoleId },
+            where: {
+              id: nextRoleId,
+            },
+            select: {
+              id: true,
+              name: true,
+            },
           });
 
     if (!nextRole) {
@@ -368,6 +473,9 @@ export class UsersService {
               description: dto.team.description?.trim() || null,
               status: 'ACTIVE',
             },
+            select: {
+              id: true,
+            },
           });
 
           teamId = team.id;
@@ -377,6 +485,9 @@ export class UsersService {
               id: dto.teamId,
               siteId: nextSiteId!,
               status: 'ACTIVE',
+            },
+            select: {
+              id: true,
             },
           });
 
@@ -398,7 +509,9 @@ export class UsersService {
         }
 
         const updatedUser = await tx.user.update({
-          where: { id },
+          where: {
+            id,
+          },
           data: {
             ...(dto.roleId !== undefined && {
               roleId: dto.roleId,
@@ -429,11 +542,7 @@ export class UsersService {
             }),
             teamId,
           },
-          include: {
-            role: true,
-            site: true,
-            team: true,
-          },
+          select: userDetailSelect,
         });
 
         await this.auditLogService.createAudit(tx, {
@@ -468,7 +577,7 @@ export class UsersService {
           },
         });
 
-        return this.sanitizeUser(updatedUser);
+        return updatedUser;
       });
     } catch (error) {
       if (
@@ -490,6 +599,10 @@ export class UsersService {
         id,
         deletedAt: null,
       },
+      select: {
+        id: true,
+        photoUrl: true,
+      },
     });
 
     if (!user) {
@@ -501,15 +614,13 @@ export class UsersService {
     try {
       const updatedUser = await this.prisma.$transaction(async (tx) => {
         const updated = await tx.user.update({
-          where: { id },
+          where: {
+            id,
+          },
           data: {
             photoUrl: savedPhoto.url,
           },
-          include: {
-            role: true,
-            site: true,
-            team: true,
-          },
+          select: userDetailSelect,
         });
 
         await this.auditLogService.createAudit(tx, {
@@ -530,7 +641,7 @@ export class UsersService {
 
       return {
         message: 'Foto user berhasil diperbarui',
-        data: this.sanitizeUser(updatedUser),
+        data: updatedUser,
       };
     } catch {
       throw new InternalServerErrorException('Gagal memperbarui foto user');
@@ -542,6 +653,11 @@ export class UsersService {
       where: {
         id,
         deletedAt: null,
+      },
+      select: {
+        id: true,
+        status: true,
+        deletedAt: true,
       },
     });
 
@@ -556,16 +672,14 @@ export class UsersService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const updated = await tx.user.update({
-          where: { id },
+          where: {
+            id,
+          },
           data: {
             status: UserStatus.INACTIVE,
             deletedAt: new Date(),
           },
-          include: {
-            role: true,
-            site: true,
-            team: true,
-          },
+          select: userDetailSelect,
         });
 
         await this.auditLogService.createAudit(tx, {
@@ -579,13 +693,12 @@ export class UsersService {
           },
           newData: {
             status: updated.status,
-            deletedAt: updated.deletedAt?.toISOString() ?? null,
           },
         });
 
         return {
           message: 'User berhasil dinonaktifkan',
-          data: this.sanitizeUser(updated),
+          data: updated,
         };
       });
     } catch (error) {
@@ -599,7 +712,14 @@ export class UsersService {
 
   async activateUser(id: string, actorId: string) {
     const user = await this.prisma.user.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        status: true,
+        deletedAt: true,
+      },
     });
 
     if (!user) {
@@ -613,16 +733,14 @@ export class UsersService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const updated = await tx.user.update({
-          where: { id },
+          where: {
+            id,
+          },
           data: {
             status: UserStatus.ACTIVE,
             deletedAt: null,
           },
-          include: {
-            role: true,
-            site: true,
-            team: true,
-          },
+          select: userDetailSelect,
         });
 
         await this.auditLogService.createAudit(tx, {
@@ -636,13 +754,12 @@ export class UsersService {
           },
           newData: {
             status: updated.status,
-            deletedAt: updated.deletedAt?.toISOString() ?? null,
           },
         });
 
         return {
           message: 'User berhasil diaktifkan',
-          data: this.sanitizeUser(updated),
+          data: updated,
         };
       });
     } catch (error) {
@@ -659,11 +776,20 @@ export class UsersService {
 
   async removeUser(id: string, actorId: string) {
     const user = await this.prisma.user.findUnique({
-      where: { id },
-      include: {
-        role: true,
-        site: true,
-        team: true,
+      where: {
+        id,
+      },
+      select: {
+        id: true,
+        fullName: true,
+        username: true,
+        email: true,
+        employeeNumber: true,
+        roleId: true,
+        siteId: true,
+        teamId: true,
+        status: true,
+        deletedAt: true,
       },
     });
 
@@ -696,7 +822,9 @@ export class UsersService {
         });
 
         await tx.user.delete({
-          where: { id },
+          where: {
+            id,
+          },
         });
       });
 
@@ -722,12 +850,5 @@ export class UsersService {
 
       throw new InternalServerErrorException('Gagal menghapus user');
     }
-  }
-
-  private sanitizeUser<T extends { passwordHash?: string | null }>(
-    user: T,
-  ): Omit<T, 'passwordHash'> {
-    const { passwordHash, ...safeUser } = user;
-    return safeUser;
   }
 }
