@@ -238,6 +238,10 @@ export class PatrolSchedulePointService {
         throw new NotFoundException('Schedule tidak ditemukan');
       }
 
+      if (schedule.status !== 'ACTIVE') {
+        throw new ConflictException('Hanya schedule ACTIVE yang dapat diubah');
+      }
+
       const point = await tx.patrolPoint.findFirst({
         where: {
           id: patrolPointId,
@@ -252,6 +256,14 @@ export class PatrolSchedulePointService {
         );
       }
 
+      if (
+        !Number.isInteger(insertAtSequence) ||
+        insertAtSequence < 1 ||
+        insertAtSequence > schedule.points.length + 1
+      ) {
+        throw new BadRequestException('Posisi point tidak valid');
+      }
+
       const alreadyExists = schedule.points.some(
         (item) => item.patrolPointId === patrolPointId,
       );
@@ -260,15 +272,31 @@ export class PatrolSchedulePointService {
         throw new ConflictException('Point sudah ada di schedule ini');
       }
 
+      // Geser sequence ke rentang sementara agar tidak bentrok
+      // dengan unique constraint scheduleId + sequence.
       await tx.patrolSchedulePoint.updateMany({
-        where: {
-          scheduleId,
-          sequence: { gte: insertAtSequence },
-        },
+        where: { scheduleId },
         data: {
-          sequence: { increment: 1 },
+          sequence: { increment: 100000 },
         },
       });
+
+      const existingPoints = await tx.patrolSchedulePoint.findMany({
+        where: { scheduleId },
+        orderBy: { sequence: 'asc' },
+      });
+
+      for (const item of existingPoints) {
+        const newSequence =
+          item.sequence - 100000 >= insertAtSequence
+            ? item.sequence - 100000 + 1
+            : item.sequence - 100000;
+
+        await tx.patrolSchedulePoint.update({
+          where: { id: item.id },
+          data: { sequence: newSequence },
+        });
+      }
 
       return tx.patrolSchedulePoint.create({
         data: {
@@ -280,12 +308,23 @@ export class PatrolSchedulePointService {
       });
     });
 
-    const today = new Date().toISOString().split('T')[0];
-
-    await this.generationService.generate(scheduleId, {
-      startDate: today,
-      endDate: today,
+    const scheduleDates = await this.prisma.patrolScheduleDate.findMany({
+      where: {
+        scheduleId,
+        status: { not: 'CANCELLED' },
+      },
+      select: { date: true },
+      orderBy: { date: 'asc' },
     });
+
+    for (const scheduleDate of scheduleDates) {
+      const dateString = scheduleDate.date.toISOString().slice(0, 10);
+
+      await this.generationService.generate(scheduleId, {
+        startDate: dateString,
+        endDate: dateString,
+      });
+    }
 
     return result;
   }

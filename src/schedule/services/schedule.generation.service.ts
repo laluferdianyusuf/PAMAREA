@@ -244,7 +244,7 @@ export class ScheduleGenerationService {
     force: boolean,
   ) {
     return this.prisma.$transaction(async (tx) => {
-      const existingRound = await tx.patrolRound.findUnique({
+      let existingRound = await tx.patrolRound.findUnique({
         where: {
           scheduleDateId_assignmentId_roundNumber: {
             scheduleDateId,
@@ -254,12 +254,18 @@ export class ScheduleGenerationService {
         },
         include: {
           checkpoints: {
-            select: { status: true },
+            select: {
+              id: true,
+              patrolPointId: true,
+              sequence: true,
+              status: true,
+            },
           },
         },
       });
 
-      if (existingRound && !force) {
+      // Ronde selesai adalah riwayat dan tidak boleh diubah.
+      if (existingRound?.status === 'COMPLETED') {
         return {
           created: false,
           skipped: true,
@@ -267,25 +273,10 @@ export class ScheduleGenerationService {
         };
       }
 
-      if (existingRound) {
-        const canResync =
-          existingRound.status === 'PENDING' &&
-          existingRound.checkpoints.every(
-            (checkpoint) => checkpoint.status === 'PENDING',
-          );
+      let created = false;
 
-        if (!canResync) {
-          return {
-            created: false,
-            skipped: true,
-            checkpointsCreated: 0,
-          };
-        }
-      }
-
-      const targetRound =
-        existingRound ??
-        (await tx.patrolRound.create({
+      if (!existingRound) {
+        existingRound = await tx.patrolRound.create({
           data: {
             scheduleDateId,
             assignmentId,
@@ -293,30 +284,86 @@ export class ScheduleGenerationService {
             scheduledStartAt: round.scheduledStartAt,
             scheduledEndAt: round.scheduledEndAt,
           },
-        }));
+          include: {
+            checkpoints: {
+              select: {
+                id: true,
+                patrolPointId: true,
+                sequence: true,
+                status: true,
+              },
+            },
+          },
+        });
 
-      if (existingRound) {
-        await tx.patrolCheckpoint.deleteMany({
-          where: { roundId: targetRound.id },
+        created = true;
+      }
+
+      const existingPointIds = new Set(
+        existingRound.checkpoints.map((checkpoint) => checkpoint.patrolPointId),
+      );
+
+      const missingPoints = route.filter(
+        (point) => !existingPointIds.has(point.patrolPointId),
+      );
+
+      // Jika ronde sudah ada dan force=false, tetap sinkronkan
+      // checkpoint yang belum tersedia.
+      if (missingPoints.length > 0) {
+        // Pindahkan sequence lama sementara agar tidak bentrok
+        // dengan sequence akhir yang akan diterapkan.
+        await tx.patrolCheckpoint.updateMany({
+          where: { roundId: existingRound.id },
+          data: {
+            sequence: { increment: 100000 },
+          },
+        });
+
+        // Buat checkpoint baru dengan sequence sementara.
+        await tx.patrolCheckpoint.createMany({
+          data: missingPoints.map((point, index) => ({
+            roundId: existingRound.id,
+            patrolPointId: point.patrolPointId,
+            sequence: 200000 + index,
+            required: point.required,
+            pointCodeSnapshot: point.patrolPoint.code,
+            pointNameSnapshot: point.patrolPoint.name,
+            radiusMetersSnapshot: point.patrolPoint.radiusMeters,
+          })),
         });
       }
 
-      await tx.patrolCheckpoint.createMany({
-        data: route.map((point, index) => ({
-          roundId: targetRound.id,
-          patrolPointId: point.patrolPointId,
-          sequence: index + 1,
-          required: point.required,
-          pointCodeSnapshot: point.patrolPoint.code,
-          pointNameSnapshot: point.patrolPoint.name,
-          radiusMetersSnapshot: point.patrolPoint.radiusMeters,
-        })),
+      const checkpoints = await tx.patrolCheckpoint.findMany({
+        where: { roundId: existingRound.id },
+        select: {
+          id: true,
+          patrolPointId: true,
+          sequence: true,
+        },
       });
 
+      const checkpointByPointId = new Map(
+        checkpoints.map((checkpoint) => [checkpoint.patrolPointId, checkpoint]),
+      );
+
+      for (let index = 0; index < route.length; index++) {
+        const point = route[index];
+        const checkpoint = checkpointByPointId.get(point.patrolPointId);
+
+        if (!checkpoint) {
+          continue;
+        }
+
+        await tx.patrolCheckpoint.update({
+          where: { id: checkpoint.id },
+          data: { sequence: index + 1 },
+        });
+      }
+
       return {
-        created: !existingRound,
+        created,
         skipped: false,
-        checkpointsCreated: route.length,
+        checkpointsCreated: missingPoints.length,
       };
     });
   }
