@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsEmail,
   IsNotEmpty,
@@ -6,7 +7,9 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { CreateTeamForUserDto } from '../../users/dto/create-team.dto.js';
 
 export class RegisterDto {
   @IsUUID()
@@ -50,4 +53,13 @@ export class RegisterDto {
   @IsString()
   @MinLength(8)
   password: string;
+
+  @IsOptional()
+  @IsUUID('4')
+  teamId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateTeamForUserDto)
+  team?: CreateTeamForUserDto;
 }

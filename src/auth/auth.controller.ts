@@ -65,8 +65,9 @@ export class AuthController {
   }
 
   @Patch('me/photo')
+  @UseGuards(JwtAuthGuard)
   @UseInterceptors(FileInterceptor('photo'))
-  changeMyPhoto(@CurrentUser('id') userId: string, @UploadedFile() file: any) {
-    return this.authService.changeMyPhoto(userId, file);
+  changeMyPhoto(@CurrentUser() user: User, @UploadedFile() file: any) {
+    return this.authService.changeMyPhoto(user.id, file);
   }
 }

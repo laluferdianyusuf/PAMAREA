@@ -69,57 +69,53 @@ export class FindingsService {
     });
   }
 
-  async findAll(query: FindingQueryDto) {
-    const {
-      page = 1,
-      limit = 20,
-      status,
-      severity,
-      patrolId,
-      patrolPointId,
-      reportedBy,
-      assignedTo,
-    } = query;
+  async findAll(query: FindingQueryDto, userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        role: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User tidak ditemukan');
+    }
+
+    const page = Math.max(1, Number(query.page) || 1);
+    const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+    const skip = (page - 1) * limit;
 
     const where: Prisma.FindingWhereInput = {
-      ...(status && { status }),
-      ...(severity && { severity }),
-      ...(patrolId && { patrolId }),
-      ...(patrolPointId && { patrolPointId }),
-
-      ...(reportedBy && {
-        reportedBy: {
-          id: reportedBy,
-        },
+      ...(user.role.name !== 'ADMIN' && {
+        reportedById: user.id,
       }),
 
-      ...(assignedTo && {
-        assignedTo: {
-          id: assignedTo,
-        },
+      ...(query.status && { status: query.status }),
+      ...(query.severity && { severity: query.severity }),
+      ...(query.patrolId && { patrolId: query.patrolId }),
+      ...(query.patrolPointId && {
+        patrolPointId: query.patrolPointId,
       }),
     };
 
-    const skip = (page - 1) * limit;
-
-    const [items, total] = await this.prisma.$transaction([
+    const [data, total] = await this.prisma.$transaction([
       this.prisma.finding.findMany({
         where,
         skip,
         take: limit,
-        orderBy: {
-          createdAt: 'desc',
-        },
+        orderBy: { createdAt: 'desc' },
         include: this.listInclude,
       }),
-
-      this.prisma.finding.count({
-        where,
-      }),
+      this.prisma.finding.count({ where }),
     ]);
 
     return {
-      data: items,
+      data,
       meta: {
         page,
         limit,

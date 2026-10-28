@@ -6,12 +6,112 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { PatrolCheckpointStatus } from '../../generated/prisma/enums.js';
+import {
+  PatrolCheckpointStatus,
+  PatrolRoundStatus,
+} from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { ReorderRoundCheckpointsDto } from '../dto/reorder.round.checkpoints.dto.js';
 
 @Injectable()
 export class PatrolRoundService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async reorderRoundCheckpoints(
+    roundId: string,
+    dto: ReorderRoundCheckpointsDto,
+  ) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const round = await tx.patrolRound.findUnique({
+          where: { id: roundId },
+          include: {
+            checkpoints: {
+              orderBy: { sequence: 'asc' },
+              select: {
+                id: true,
+                sequence: true,
+                status: true,
+              },
+            },
+          },
+        });
+
+        if (!round) {
+          throw new NotFoundException('Ronde patroli tidak ditemukan');
+        }
+
+        if (round.status !== PatrolRoundStatus.PENDING) {
+          throw new ConflictException(
+            'Urutan checkpoint hanya dapat diubah pada ronde PENDING',
+          );
+        }
+
+        const currentIds = round.checkpoints
+          .map((checkpoint) => checkpoint.id)
+          .sort();
+
+        const requestedIds = [...dto.checkpointIds].sort();
+
+        if (
+          currentIds.length !== requestedIds.length ||
+          currentIds.some((id, index) => id !== requestedIds[index])
+        ) {
+          throw new BadRequestException(
+            'Daftar checkpoint harus mencakup seluruh checkpoint pada ronde ini tanpa menambah atau menghapus checkpoint',
+          );
+        }
+
+        for (const checkpoint of round.checkpoints) {
+          if (checkpoint.status !== 'PENDING') {
+            throw new ConflictException(
+              'Ronde memiliki checkpoint yang bukan PENDING',
+            );
+          }
+        }
+
+        // Hindari konflik unique constraint pada sequence
+        // selama proses pertukaran urutan.
+        const temporaryOffset = round.checkpoints.length;
+
+        for (const checkpoint of round.checkpoints) {
+          await tx.patrolCheckpoint.update({
+            where: { id: checkpoint.id },
+            data: {
+              sequence: checkpoint.sequence + temporaryOffset,
+            },
+          });
+        }
+
+        for (const [index, checkpointId] of dto.checkpointIds.entries()) {
+          await tx.patrolCheckpoint.update({
+            where: { id: checkpointId },
+            data: {
+              sequence: index + 1,
+            },
+          });
+        }
+
+        const updated = await tx.patrolRound.findUniqueOrThrow({
+          where: { id: roundId },
+          include: {
+            checkpoints: {
+              orderBy: { sequence: 'asc' },
+            },
+          },
+        });
+
+        return {
+          message: 'Urutan checkpoint ronde berhasil diperbarui',
+          roundId,
+          checkpoints: updated.checkpoints,
+        };
+      },
+      {
+        isolationLevel: 'Serializable',
+      },
+    );
+  }
 
   async findById(id: string) {
     const round = await this.prisma.patrolRound.findUnique({
@@ -67,6 +167,137 @@ export class PatrolRoundService {
         startedAt: new Date(),
       },
     });
+  }
+
+  async getRoundsByUser(userId: string, date?: string) {
+    await this.syncOverdueRounds();
+
+    const dateKey = date ?? this.getTodayDateKey();
+
+    if (!this.isValidDateKey(dateKey)) {
+      throw new BadRequestException({
+        code: 'INVALID_DATE',
+        message: 'Tanggal harus menggunakan format YYYY-MM-DD',
+      });
+    }
+
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+
+    if (!targetUser) {
+      throw new NotFoundException('User tidak ditemukan');
+    }
+
+    const scheduleDate = new Date(`${dateKey}T00:00:00.000Z`);
+
+    const rounds = await this.prisma.patrolRound.findMany({
+      where: {
+        assignment: {
+          userId: targetUser.id,
+        },
+        scheduleDate: {
+          date: scheduleDate,
+        },
+      },
+      include: {
+        assignment: {
+          include: {
+            schedule: {
+              include: {
+                site: true,
+              },
+            },
+          },
+        },
+        scheduleDate: true,
+        checkpoints: {
+          orderBy: {
+            sequence: 'asc',
+          },
+          include: {
+            patrolPoint: true,
+          },
+        },
+      },
+      orderBy: [{ scheduledStartAt: 'asc' }, { roundNumber: 'asc' }],
+    });
+
+    return {
+      userId: targetUser.id,
+      date: dateKey,
+      totalRounds: rounds.length,
+      data: rounds.map((round) => {
+        const checkpoints = round.checkpoints;
+
+        const required = checkpoints.filter((item) => item.required);
+
+        const completedRequired = required.filter(
+          (item) => item.status === PatrolCheckpointStatus.COMPLETED,
+        );
+
+        const missed = checkpoints.filter(
+          (item) =>
+            item.status === PatrolCheckpointStatus.MISSED ||
+            item.status === PatrolCheckpointStatus.FAILED,
+        );
+
+        const progress =
+          required.length === 0
+            ? 0
+            : Math.round((completedRequired.length / required.length) * 100);
+
+        return {
+          id: round.id,
+          roundNumber: round.roundNumber,
+          status: round.status,
+          scheduledStartAt: round.scheduledStartAt,
+          scheduledEndAt: round.scheduledEndAt,
+          startedAt: round.startedAt,
+          completedAt: round.completedAt,
+
+          schedule: {
+            id: round.assignment.schedule.id,
+            name: round.assignment.schedule.name,
+            startTime: round.assignment.schedule.startTime,
+            endTime: round.assignment.schedule.endTime,
+            intervalMinutes: round.assignment.schedule.intervalMinutes,
+            enforceSequence: round.assignment.schedule.enforceSequence,
+          },
+
+          site: {
+            id: round.assignment.schedule.site.id,
+            code: round.assignment.schedule.site.code,
+            name: round.assignment.schedule.site.name,
+            address: round.assignment.schedule.site.address,
+          },
+
+          progress: {
+            totalCheckpoints: checkpoints.length,
+            requiredCheckpoints: required.length,
+            completedCheckpoints: completedRequired.length,
+            missedCheckpoints: missed.length,
+            percentage: progress,
+          },
+
+          checkpoints: checkpoints.map((checkpoint) => ({
+            id: checkpoint.id,
+            sequence: checkpoint.sequence,
+            status: checkpoint.status,
+            required: checkpoint.required,
+            visitedAt: checkpoint.visitedAt,
+            patrolPoint: {
+              id: checkpoint.patrolPoint.id,
+              name: checkpoint.patrolPoint.name,
+              latitude: checkpoint.patrolPoint.latitude,
+              longitude: checkpoint.patrolPoint.longitude,
+              radiusMeters: checkpoint.patrolPoint.radiusMeters,
+            },
+          })),
+        };
+      }),
+    };
   }
 
   async getRounds(userId: string, date?: string) {

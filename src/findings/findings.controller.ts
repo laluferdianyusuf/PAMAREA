@@ -35,8 +35,8 @@ export class FindingsController {
   }
 
   @Get()
-  findAll(@Query() query: FindingQueryDto) {
-    return this.findingsService.findAll(query);
+  findAll(@Query() query: FindingQueryDto, @CurrentUser() user: User) {
+    return this.findingsService.findAll(query, user.id);
   }
 
   @Get(':id')

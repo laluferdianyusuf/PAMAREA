@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   InternalServerErrorException,
@@ -113,279 +114,307 @@ export class UsersService {
     };
   }
 
-  async createUser(dto: CreateUserDto, createdById?: string) {
-    try {
-      const existingUsername = await this.prisma.user.findUnique({
-        where: {
-          username: dto.username,
-        },
-      });
-
-      if (existingUsername) {
-        throw new ConflictException(
-          `Username "${dto.username}" sudah digunakan`,
-        );
-      }
-
-      if (dto.email) {
-        const existingEmail = await this.prisma.user.findUnique({
-          where: {
-            email: dto.email,
-          },
-        });
-
-        if (existingEmail) {
-          throw new ConflictException(`Email "${dto.email}" sudah digunakan`);
-        }
-      }
-
-      if (dto.employeeNumber) {
-        const existingEmployee = await this.prisma.user.findUnique({
-          where: {
-            employeeNumber: dto.employeeNumber,
-          },
-        });
-
-        if (existingEmployee) {
-          throw new ConflictException(
-            `Employee number "${dto.employeeNumber}" sudah digunakan`,
-          );
-        }
-      }
-
-      const role = await this.prisma.role.findUnique({
-        where: {
-          id: dto.roleId,
-        },
-      });
-
-      if (!role) {
-        throw new NotFoundException('Role tidak ditemukan');
-      }
-
-      if (dto.siteId) {
-        const site = await this.prisma.site.findUnique({
-          where: {
-            id: dto.siteId,
-          },
-        });
-
-        if (!site) {
-          throw new NotFoundException('Site tidak ditemukan');
-        }
-
-        if (site.status !== 'ACTIVE') {
-          throw new ConflictException('Site yang dipilih tidak aktif');
-        }
-      }
-
-      const passwordHash = await bcrypt.hash(dto.password, 12);
-
-      const user = await this.prisma.user.create({
-        data: {
-          roleId: dto.roleId,
-          siteId: dto.siteId,
-          createdById,
-          employeeNumber: dto.employeeNumber,
-          fullName: dto.fullName,
-          username: dto.username,
-          email: dto.email,
-          phone: dto.phone,
-          passwordHash,
-          photoUrl: dto.photoUrl ?? null,
-          status: UserStatus.ACTIVE,
-        },
-        include: {
-          role: true,
-          site: true,
-        },
-      });
-
-      return {
-        message: 'User berhasil ditambahkan',
-        data: this.sanitizeUser(user),
-      };
-    } catch (error: any) {
-      if (
-        error instanceof ConflictException ||
-        error instanceof NotFoundException
-      ) {
-        throw error;
-      }
-
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException(
-          'Username, email, atau employee number sudah digunakan',
-        );
-      }
-
-      throw new InternalServerErrorException('Gagal menambahkan user');
+  async createUser(dto: CreateUserDto, createdById: string) {
+    if (dto.teamId && dto.team) {
+      throw new BadRequestException(
+        'Pilih teamId atau team untuk membuat regu baru, bukan keduanya.',
+      );
     }
-  }
 
-  async updateUser(id: string, dto: UpdateUserDto) {
+    const username = dto.username.trim();
+    const email = dto.email?.trim().toLowerCase() || undefined;
+    const employeeNumber = dto.employeeNumber?.trim() || undefined;
+
     const existingUser = await this.prisma.user.findFirst({
       where: {
-        id,
-        deletedAt: null,
+        OR: [
+          { username },
+          ...(email ? [{ email }] : []),
+          ...(employeeNumber ? [{ employeeNumber }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        employeeNumber: true,
       },
     });
 
-    if (!existingUser) {
-      throw new NotFoundException('User tidak ditemukan');
-    }
+    if (existingUser) {
+      if (existingUser.username === username) {
+        throw new ConflictException('Username sudah digunakan.');
+      }
 
-    if (dto.username && dto.username !== existingUser.username) {
-      const usernameExists = await this.prisma.user.findUnique({
-        where: {
-          username: dto.username,
-        },
-      });
+      if (email && existingUser.email === email) {
+        throw new ConflictException('Email sudah digunakan.');
+      }
 
-      if (usernameExists) {
-        throw new ConflictException(
-          `Username "${dto.username}" sudah digunakan`,
-        );
+      if (employeeNumber && existingUser.employeeNumber === employeeNumber) {
+        throw new ConflictException('Nomor karyawan sudah digunakan.');
       }
     }
 
-    if (dto.email && dto.email !== existingUser.email) {
-      const emailExists = await this.prisma.user.findUnique({
-        where: {
-          email: dto.email,
-        },
-      });
+    const role = await this.prisma.role.findUnique({
+      where: { id: dto.roleId },
+    });
 
-      if (emailExists) {
-        throw new ConflictException(`Email "${dto.email}" sudah digunakan`);
-      }
+    if (!role) {
+      throw new NotFoundException('Role tidak ditemukan.');
     }
 
-    if (
-      dto.employeeNumber &&
-      dto.employeeNumber !== existingUser.employeeNumber
-    ) {
-      const employeeExists = await this.prisma.user.findUnique({
-        where: {
-          employeeNumber: dto.employeeNumber,
-        },
-      });
-
-      if (employeeExists) {
-        throw new ConflictException(
-          `Employee number "${dto.employeeNumber}" sudah digunakan`,
-        );
-      }
+    if (role.name === 'SECURITY' && !dto.siteId) {
+      throw new BadRequestException('Site wajib diisi untuk user SECURITY.');
     }
 
-    if (dto.roleId) {
-      const role = await this.prisma.role.findUnique({
-        where: {
-          id: dto.roleId,
-        },
-      });
+    if ((dto.teamId || dto.team) && role.name !== 'SECURITY') {
+      throw new BadRequestException(
+        'Regu hanya dapat diberikan kepada user SECURITY.',
+      );
+    }
 
-      if (!role) {
-        throw new NotFoundException('Role tidak ditemukan');
-      }
+    if (role.name === 'SECURITY' && !dto.teamId && !dto.team) {
+      throw new BadRequestException(
+        'Pilih regu yang sudah ada atau isi data regu baru.',
+      );
     }
 
     if (dto.siteId) {
-      const site = await this.prisma.site.findUnique({
+      const site = await this.prisma.site.findFirst({
         where: {
           id: dto.siteId,
+          status: 'ACTIVE',
         },
       });
 
       if (!site) {
-        throw new NotFoundException('Site tidak ditemukan');
-      }
-
-      if (site.status !== 'ACTIVE') {
-        throw new ConflictException('Site yang dipilih tidak aktif');
+        throw new NotFoundException('Site tidak ditemukan atau tidak aktif.');
       }
     }
 
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+
     try {
-      const updateData: Prisma.UserUpdateInput = {
-        ...(dto.roleId && {
-          role: {
-            connect: {
-              id: dto.roleId,
+      return await this.prisma.$transaction(async (tx) => {
+        let teamId: string | null = null;
+
+        if (dto.team) {
+          const name = dto.team.name.trim();
+          const code = dto.team.code.trim().toUpperCase();
+
+          const team = await tx.team.create({
+            data: {
+              siteId: dto.siteId!,
+              name,
+              code,
+              description: dto.team.description?.trim() || null,
+              status: 'ACTIVE',
             },
+          });
+
+          teamId = team.id;
+        }
+
+        if (dto.teamId) {
+          const team = await tx.team.findFirst({
+            where: {
+              id: dto.teamId,
+              siteId: dto.siteId!,
+              status: 'ACTIVE',
+            },
+          });
+
+          if (!team) {
+            throw new BadRequestException(
+              'Regu tidak ditemukan, tidak aktif, atau bukan milik site yang dipilih.',
+            );
+          }
+
+          teamId = team.id;
+        }
+
+        const user = await tx.user.create({
+          data: {
+            roleId: dto.roleId,
+            siteId: dto.siteId ?? null,
+            createdById,
+            employeeNumber: employeeNumber ?? null,
+            fullName: dto.fullName.trim(),
+            username,
+            email: email ?? null,
+            phone: dto.phone ?? null,
+            passwordHash,
+            photoUrl: dto.photoUrl ?? null,
+            status: 'ACTIVE',
+            teamId,
           },
-        }),
+          include: {
+            role: true,
+            site: true,
+            team: true,
+          },
+        });
 
-        ...(dto.siteId !== undefined && {
-          site: dto.siteId
-            ? {
-                connect: {
-                  id: dto.siteId,
-                },
-              }
-            : {
-                disconnect: true,
-              },
-        }),
-
-        ...(dto.employeeNumber !== undefined && {
-          employeeNumber: dto.employeeNumber,
-        }),
-
-        ...(dto.fullName !== undefined && {
-          fullName: dto.fullName,
-        }),
-
-        ...(dto.username !== undefined && {
-          username: dto.username,
-        }),
-
-        ...(dto.email !== undefined && {
-          email: dto.email,
-        }),
-
-        ...(dto.phone !== undefined && {
-          phone: dto.phone,
-        }),
-
-        ...(dto.photoUrl !== undefined && {
-          photoUrl: dto.photoUrl,
-        }),
-      };
-
-      if (dto.password) {
-        updateData.passwordHash = await bcrypt.hash(dto.password, 12);
-      }
-
-      const updated = await this.prisma.user.update({
-        where: {
-          id,
-        },
-        data: updateData,
-        include: {
-          role: true,
-          site: true,
-        },
+        return this.sanitizeUser(user);
       });
-
-      return {
-        message: 'User berhasil diperbarui',
-        data: this.sanitizeUser(updated),
-      };
-    } catch (error: any) {
+    } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
         throw new ConflictException(
-          'Username, email, atau employee number sudah digunakan',
+          'Username, email, nomor karyawan, atau kode/nama regu sudah digunakan.',
         );
       }
 
-      throw new InternalServerErrorException('Gagal memperbarui user');
+      throw error;
+    }
+  }
+
+  async updateUser(id: string, dto: UpdateUserDto) {
+    if (dto.teamId && dto.team) {
+      throw new BadRequestException('Pilih teamId atau team, bukan keduanya.');
+    }
+
+    const existingUser = await this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        role: true,
+        site: true,
+        team: true,
+      },
+    });
+
+    if (!existingUser) {
+      throw new NotFoundException('User tidak ditemukan.');
+    }
+
+    const nextRoleId = dto.roleId ?? existingUser.roleId;
+    const nextSiteId =
+      dto.siteId !== undefined ? dto.siteId : existingUser.siteId;
+
+    const nextRole =
+      nextRoleId === existingUser.roleId
+        ? existingUser.role
+        : await this.prisma.role.findUnique({
+            where: { id: nextRoleId },
+          });
+
+    if (!nextRole) {
+      throw new NotFoundException('Role tidak ditemukan.');
+    }
+
+    if (nextRole.name === 'SECURITY' && !nextSiteId) {
+      throw new BadRequestException('Site wajib diisi untuk user SECURITY.');
+    }
+
+    if ((dto.teamId || dto.team) && nextRole.name !== 'SECURITY') {
+      throw new BadRequestException(
+        'Regu hanya dapat diberikan kepada user SECURITY.',
+      );
+    }
+
+    const passwordHash = dto.password
+      ? await bcrypt.hash(dto.password, 12)
+      : undefined;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        let teamId: string | null = existingUser.teamId ?? null;
+
+        if (nextRole.name !== 'SECURITY') {
+          teamId = null;
+        } else if (dto.team) {
+          const team = await tx.team.create({
+            data: {
+              siteId: nextSiteId!,
+              name: dto.team.name.trim(),
+              code: dto.team.code.trim().toUpperCase(),
+              description: dto.team.description?.trim() || null,
+              status: 'ACTIVE',
+            },
+          });
+
+          teamId = team.id;
+        } else if (dto.teamId) {
+          const team = await tx.team.findFirst({
+            where: {
+              id: dto.teamId,
+              siteId: nextSiteId!,
+              status: 'ACTIVE',
+            },
+          });
+
+          if (!team) {
+            throw new BadRequestException(
+              'Regu tidak ditemukan, tidak aktif, atau bukan milik site yang dipilih.',
+            );
+          }
+
+          teamId = team.id;
+        } else if (nextSiteId !== existingUser.siteId) {
+          // Jika site berubah, regu lama tidak boleh ikut terbawa.
+          teamId = null;
+        }
+
+        if (nextRole.name === 'SECURITY' && !teamId) {
+          throw new BadRequestException(
+            'User SECURITY wajib memiliki regu aktif.',
+          );
+        }
+
+        const updatedUser = await tx.user.update({
+          where: { id },
+          data: {
+            ...(dto.roleId !== undefined && {
+              roleId: dto.roleId,
+            }),
+            ...(dto.siteId !== undefined && {
+              siteId: dto.siteId,
+            }),
+            ...(dto.employeeNumber !== undefined && {
+              employeeNumber: dto.employeeNumber?.trim() || null,
+            }),
+            ...(dto.fullName !== undefined && {
+              fullName: dto.fullName.trim(),
+            }),
+            ...(dto.username !== undefined && {
+              username: dto.username.trim(),
+            }),
+            ...(dto.email !== undefined && {
+              email: dto.email?.trim().toLowerCase() || null,
+            }),
+            ...(dto.phone !== undefined && {
+              phone: dto.phone,
+            }),
+            ...(dto.photoUrl !== undefined && {
+              photoUrl: dto.photoUrl,
+            }),
+            ...(passwordHash && {
+              passwordHash,
+            }),
+            teamId,
+          },
+          include: {
+            role: true,
+            site: true,
+            team: true,
+          },
+        });
+
+        return this.sanitizeUser(updatedUser);
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'Data user atau nama/kode regu sudah digunakan.',
+        );
+      }
+
+      throw error;
     }
   }
 

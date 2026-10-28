@@ -91,7 +91,21 @@ export class PatrolPointsService {
           select: { id: true, code: true, name: true, status: true },
         },
 
-        nfcAssignments: true,
+        nfcAssignments: {
+          select: {
+            id: true,
+            patrolPointId: true,
+            nfcTagId: true,
+            status: true,
+          },
+        },
+
+        schedulePoints: {
+          select: {
+            id: true,
+            scheduleId: true,
+          },
+        },
 
         _count: {
           select: {

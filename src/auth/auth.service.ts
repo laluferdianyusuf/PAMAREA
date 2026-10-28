@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   InternalServerErrorException,
@@ -34,108 +35,155 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto, createdById?: string) {
-    const existingUsername = await this.prisma.user.findUnique({
+    if (dto.teamId && dto.team) {
+      throw new BadRequestException(
+        'Gunakan teamId untuk regu yang sudah ada atau team untuk membuat regu baru.',
+      );
+    }
+
+    const username = dto.username.trim();
+    const email = dto.email?.trim().toLowerCase() || undefined;
+    const employeeNumber = dto.employeeNumber?.trim() || undefined;
+
+    const existingUser = await this.prisma.user.findFirst({
       where: {
-        username: dto.username,
+        OR: [
+          { username },
+          ...(email ? [{ email }] : []),
+          ...(employeeNumber ? [{ employeeNumber }] : []),
+        ],
+      },
+      select: {
+        username: true,
+        email: true,
+        employeeNumber: true,
       },
     });
 
-    if (existingUsername) {
-      throw new ConflictException('Username sudah digunakan');
-    }
+    if (existingUser) {
+      if (existingUser.username === username) {
+        throw new ConflictException('Username sudah digunakan.');
+      }
 
-    const existingEmployeeNumber = await this.prisma.user.findUnique({
-      where: {
-        employeeNumber: dto.employeeNumber,
-      },
-    });
+      if (email && existingUser.email === email) {
+        throw new ConflictException('Email sudah digunakan.');
+      }
 
-    if (existingEmployeeNumber) {
-      throw new ConflictException('Nomor security sudah digunakan');
-    }
-
-    if (dto.email) {
-      const existingEmail = await this.prisma.user.findUnique({
-        where: {
-          email: dto.email,
-        },
-      });
-
-      if (existingEmail) {
-        throw new ConflictException('Email sudah digunakan');
+      if (employeeNumber && existingUser.employeeNumber === employeeNumber) {
+        throw new ConflictException('Nomor karyawan sudah digunakan.');
       }
     }
 
     const role = await this.prisma.role.findUnique({
-      where: {
-        id: dto.roleId,
-      },
+      where: { id: dto.roleId },
     });
 
     if (!role) {
-      throw new NotFoundException('Role tidak ditemukan');
+      throw new NotFoundException('Role tidak ditemukan.');
+    }
+
+    if (role.name === 'SECURITY' && !dto.siteId) {
+      throw new BadRequestException('Site wajib diisi untuk user SECURITY.');
+    }
+
+    if ((dto.teamId || dto.team) && role.name !== 'SECURITY') {
+      throw new BadRequestException(
+        'Regu hanya dapat diberikan kepada user SECURITY.',
+      );
+    }
+
+    if (role.name === 'SECURITY' && !dto.teamId && !dto.team) {
+      throw new BadRequestException(
+        'Pilih regu yang sudah ada atau isi data regu baru.',
+      );
     }
 
     if (dto.siteId) {
-      const site = await this.prisma.site.findUnique({
+      const site = await this.prisma.site.findFirst({
         where: {
           id: dto.siteId,
+          status: 'ACTIVE',
         },
       });
 
       if (!site) {
-        throw new NotFoundException('Site tidak ditemukan');
-      }
-
-      if (site.status !== 'ACTIVE') {
-        throw new ConflictException('Site tidak aktif');
+        throw new NotFoundException('Site tidak ditemukan atau tidak aktif.');
       }
     }
 
     const passwordHash = await bcrypt.hash(dto.password, 12);
 
     try {
-      const user = await this.prisma.user.create({
-        data: {
-          roleId: dto.roleId,
-          siteId: dto.siteId ?? null,
-          createdById: createdById ?? null,
+      const user = await this.prisma.$transaction(async (tx) => {
+        let teamId: string | null = null;
 
-          employeeNumber: dto.employeeNumber,
+        if (dto.team) {
+          const team = await tx.team.create({
+            data: {
+              siteId: dto.siteId!,
+              name: dto.team.name.trim(),
+              code: dto.team.code.trim().toUpperCase(),
+              description: dto.team.description?.trim() || null,
+              status: 'ACTIVE',
+            },
+          });
 
-          fullName: dto.fullName,
-          username: dto.username,
-          email: dto.email ?? null,
-          phone: dto.phone ?? null,
+          teamId = team.id;
+        }
 
-          photoUrl: dto.photoUrl ?? null,
+        if (dto.teamId) {
+          const team = await tx.team.findFirst({
+            where: {
+              id: dto.teamId,
+              siteId: dto.siteId!,
+              status: 'ACTIVE',
+            },
+          });
 
-          passwordHash,
+          if (!team) {
+            throw new BadRequestException(
+              'Regu tidak ditemukan, tidak aktif, atau bukan milik site yang dipilih.',
+            );
+          }
 
-          status: UserStatus.ACTIVE,
-        },
+          teamId = team.id;
+        }
 
-        include: {
-          role: true,
-          site: true,
-        },
+        return tx.user.create({
+          data: {
+            roleId: dto.roleId,
+            siteId: dto.siteId ?? null,
+            createdById,
+            employeeNumber: employeeNumber ?? null,
+            fullName: dto.fullName.trim(),
+            username,
+            email: email ?? null,
+            phone: dto.phone ?? null,
+            photoUrl: dto.photoUrl ?? null,
+            passwordHash,
+            status: 'ACTIVE',
+            teamId,
+          },
+          include: {
+            role: true,
+            site: true,
+            team: true,
+          },
+        });
       });
 
-      return {
-        message: 'User berhasil didaftarkan',
-        data: this.sanitizeUser(user),
-      };
-    } catch (error: any) {
+      return this.sanitizeUser(user);
+    } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2002'
       ) {
         throw new ConflictException(
-          'Username, email, atau employee number sudah digunakan',
+          'Username, email, nomor karyawan, atau nama/kode regu sudah digunakan.',
         );
       }
 
-      throw new InternalServerErrorException('Gagal mendaftarkan user');
+      throw error;
     }
   }
 
@@ -147,8 +195,30 @@ export class AuthService {
       },
 
       include: {
-        role: true,
-        site: true,
+        role: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+          },
+        },
+        site: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            address: true,
+            status: true,
+          },
+        },
+        team: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            description: true,
+          },
+        },
       },
     });
 
@@ -236,8 +306,30 @@ export class AuthService {
       include: {
         user: {
           include: {
-            role: true,
-            site: true,
+            role: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+              },
+            },
+            site: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                address: true,
+                status: true,
+              },
+            },
+            team: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                description: true,
+              },
+            },
           },
         },
       },
@@ -359,8 +451,30 @@ export class AuthService {
       },
 
       include: {
-        role: true,
-        site: true,
+        role: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+          },
+        },
+        site: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            address: true,
+            status: true,
+          },
+        },
+        team: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            description: true,
+          },
+        },
       },
     });
 
@@ -406,8 +520,30 @@ export class AuthService {
           photoUrl: savedPhoto.url,
         },
         include: {
-          role: true,
-          site: true,
+          role: {
+            select: {
+              id: true,
+              name: true,
+              description: true,
+            },
+          },
+          site: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              address: true,
+              status: true,
+            },
+          },
+          team: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              description: true,
+            },
+          },
         },
       });
 
@@ -415,7 +551,8 @@ export class AuthService {
         message: 'Foto profil berhasil diperbarui',
         data: this.sanitizeUser(updatedUser),
       };
-    } catch {
+    } catch (error) {
+      console.error('CHANGE MY PHOTO ERROR:', error);
       throw new InternalServerErrorException('Gagal memperbarui foto profil');
     }
   }

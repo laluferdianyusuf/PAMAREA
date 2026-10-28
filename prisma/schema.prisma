@@ -163,6 +163,11 @@ enum ShiftChangeStatus {
   CANCELLED
 }
 
+enum TeamStatus {
+  ACTIVE
+  INACTIVE
+}
+
 // ============================================================
 // ROLE
 // ============================================================
@@ -211,6 +216,7 @@ model Site {
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  teams     Team[]
 
   @@index([status])
   @@index([createdById])
@@ -242,7 +248,7 @@ model User {
 
   passwordHash String @map("password_hash")
 
-  photoUrl        String?    @map("photo_url") @db.VarChar(500)
+  photoUrl String? @map("photo_url") @db.VarChar(500)
 
   status UserStatus @default(ACTIVE)
 
@@ -301,12 +307,39 @@ model User {
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+  team      Team?    @relation(fields: [teamId], references: [id])
+  teamId    String?  @db.Uuid
 
   @@index([roleId])
   @@index([siteId])
   @@index([status])
   @@index([deletedAt])
   @@map("users")
+}
+
+// ============================================================
+// SESSION
+// ============================================================
+
+model Team {
+  id          String     @id @default(uuid()) @db.Uuid
+  siteId      String     @map("site_id") @db.Uuid
+  name        String     @db.VarChar(100)
+  code        String     @db.VarChar(30)
+  description String?    @db.VarChar(255)
+  status      TeamStatus @default(ACTIVE)
+
+  site  Site   @relation(fields: [siteId], references: [id])
+  users User[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([siteId, name])
+  @@unique([siteId, code])
+  @@index([siteId])
+  @@index([status])
+  @@map("teams")
 }
 
 // ============================================================
