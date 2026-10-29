@@ -4,6 +4,9 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import ExcelJS from 'exceljs';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { AuditLogService } from '../audit/audit.service.js';
 import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { EmergencyService } from '../emergency/emergency.service.js';
@@ -308,6 +311,672 @@ export class PatrolsService {
       totalPatrols: patrols.length,
       data: Array.from(grouped.values()),
     };
+  }
+
+  async exportAllPatrolsGroupedByUser(params?: {
+    search?: string;
+    status?: PatrolStatus;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<Buffer> {
+    const search = params?.search?.trim();
+
+    const parseDate = (value?: string): Date | undefined => {
+      if (!value) return undefined;
+
+      const date = new Date(value);
+
+      if (Number.isNaN(date.getTime())) {
+        throw new BadRequestException(`Format tanggal tidak valid: ${value}`);
+      }
+
+      return date;
+    };
+
+    const startDate = parseDate(params?.startDate);
+    const endDate = parseDate(params?.endDate);
+
+    if (startDate && endDate && startDate > endDate) {
+      throw new BadRequestException(
+        'startDate tidak boleh lebih besar dari endDate',
+      );
+    }
+
+    const where = {
+      status: params?.status ?? PatrolStatus.SUBMITTED,
+
+      ...(startDate || endDate
+        ? {
+            startedAt: {
+              ...(startDate ? { gte: startDate } : {}),
+              ...(endDate ? { lte: endDate } : {}),
+            },
+          }
+        : {}),
+
+      ...(search
+        ? {
+            OR: [
+              {
+                reportNumber: {
+                  contains: search,
+                  mode: 'insensitive' as const,
+                },
+              },
+              {
+                user: {
+                  fullName: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
+              {
+                user: {
+                  employeeNumber: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
+              {
+                user: {
+                  username: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    // Menggunakan relasi dan field dari query Anda.
+    // Tidak ada pagination: seluruh data sesuai filter diambil.
+    const patrols = await this.prisma.patrol.findMany({
+      where,
+      select: {
+        id: true,
+        reportNumber: true,
+        startedAt: true,
+        completedAt: true,
+        status: true,
+
+        latitude: true,
+        longitude: true,
+        gpsAccuracy: true,
+        distanceFromPoint: true,
+        gpsValidationStatus: true,
+
+        nfcUidSnapshot: true,
+        nfcValidationStatus: true,
+        nfcBypass: true,
+        nfcBypassReason: true,
+        nfcBypassNote: true,
+
+        user: {
+          select: {
+            id: true,
+            employeeNumber: true,
+            fullName: true,
+            username: true,
+          },
+        },
+
+        site: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+
+        patrolPoint: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            latitude: true,
+            longitude: true,
+          },
+        },
+
+        checkpoint: {
+          select: {
+            id: true,
+            sequence: true,
+            status: true,
+            pointCodeSnapshot: true,
+            pointNameSnapshot: true,
+            visitedAt: true,
+          },
+        },
+
+        answers: {
+          select: {
+            id: true,
+            questionId: true,
+            questionTextSnapshot: true,
+            answerValue: true,
+            answerLabelSnapshot: true,
+            photos: {
+              select: {
+                id: true,
+                fileUrl: true,
+                fileName: true,
+                mimeType: true,
+                fileSize: true,
+                latitude: true,
+                longitude: true,
+                capturedAt: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'asc' },
+        },
+
+        photos: {
+          where: { answerId: null },
+          select: {
+            id: true,
+            fileUrl: true,
+            fileName: true,
+            mimeType: true,
+            fileSize: true,
+            latitude: true,
+            longitude: true,
+            capturedAt: true,
+          },
+        },
+
+        findings: {
+          select: {
+            id: true,
+            title: true,
+            description: true,
+            severity: true,
+            status: true,
+            resolvedAt: true,
+            resolutionNote: true,
+            createdAt: true,
+
+            patrolPoint: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+              },
+            },
+
+            reportedBy: {
+              select: {
+                id: true,
+                fullName: true,
+                employeeNumber: true,
+              },
+            },
+
+            assignedTo: {
+              select: {
+                id: true,
+                fullName: true,
+                employeeNumber: true,
+              },
+            },
+
+            resolvedBy: {
+              select: {
+                id: true,
+                fullName: true,
+                employeeNumber: true,
+              },
+            },
+
+            photos: {
+              select: {
+                id: true,
+                fileUrl: true,
+                fileName: true,
+                mimeType: true,
+                fileSize: true,
+                createdAt: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+      },
+
+      orderBy: { startedAt: 'desc' },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+
+    workbook.creator = 'PAMAREA';
+    workbook.created = new Date();
+
+    const uploadDir = path.resolve(
+      process.env.UPLOAD_DIR || path.join(process.cwd(), 'upload'),
+    );
+
+    const missingPhotos: string[] = [];
+    let embeddedPhotos = 0;
+
+    // Mengambil file lokal dengan validasi path.
+    const readPhoto = async (
+      fileUrl: string,
+    ): Promise<{
+      buffer: Buffer;
+      extension: 'jpeg' | 'png';
+    } | null> => {
+      try {
+        let relativePath = fileUrl;
+
+        if (/^https?:\/\//i.test(fileUrl)) {
+          relativePath = decodeURIComponent(new URL(fileUrl).pathname);
+        }
+
+        relativePath = relativePath.replace(/^\/+/, '');
+
+        // Mendukung URL seperti /upload/foto.jpg
+        // atau /uploads/foto.jpg.
+        relativePath = relativePath.replace(
+          /^(?:uploads?|public\/uploads?)\//i,
+          '',
+        );
+
+        const fullPath = path.resolve(uploadDir, relativePath);
+        const relative = path.relative(uploadDir, fullPath);
+
+        if (
+          !relative ||
+          relative === '..' ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        ) {
+          return null;
+        }
+
+        const buffer = await fs.readFile(fullPath);
+        const extension = path.extname(fullPath).toLowerCase();
+
+        if (extension === '.jpg' || extension === '.jpeg') {
+          return { buffer, extension: 'jpeg' };
+        }
+
+        if (extension === '.png') {
+          return { buffer, extension: 'png' };
+        }
+
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    // Membuat worksheet dan header.
+    const makeSheet = (
+      name: string,
+      columns: { header: string; key: string; width: number }[],
+    ) => {
+      const sheet = workbook.addWorksheet(name);
+
+      sheet.columns = columns;
+      sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+      const header = sheet.getRow(1);
+
+      header.font = {
+        bold: true,
+        color: { argb: 'FFFFFFFF' },
+      };
+
+      header.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1F4E78' },
+      };
+
+      header.alignment = {
+        vertical: 'middle',
+        wrapText: true,
+      };
+
+      header.height = 28;
+
+      return sheet;
+    };
+
+    const patrolSheet = makeSheet('Data Patroli', [
+      { header: 'ID Patroli', key: 'id', width: 38 },
+      { header: 'Nomor Laporan', key: 'reportNumber', width: 25 },
+      { header: 'ID Petugas', key: 'userId', width: 38 },
+      { header: 'NIK/No. Pegawai', key: 'employeeNumber', width: 22 },
+      { header: 'Nama Petugas', key: 'fullName', width: 28 },
+      { header: 'Username', key: 'username', width: 22 },
+      { header: 'Lokasi/Site', key: 'site', width: 25 },
+      { header: 'Titik Kode', key: 'pointCode', width: 18 },
+      { header: 'Titik Patroli', key: 'pointName', width: 28 },
+      { header: 'Checkpoint', key: 'checkpoint', width: 25 },
+      { header: 'Urutan Checkpoint', key: 'sequence', width: 18 },
+      { header: 'Status Checkpoint', key: 'checkpointStatus', width: 22 },
+      { header: 'Waktu Kunjungan', key: 'visitedAt', width: 23 },
+      { header: 'Mulai Patroli', key: 'startedAt', width: 23 },
+      { header: 'Selesai Patroli', key: 'completedAt', width: 23 },
+      { header: 'Status Patroli', key: 'status', width: 20 },
+      { header: 'Latitude Aktual', key: 'latitude', width: 18 },
+      { header: 'Longitude Aktual', key: 'longitude', width: 18 },
+      { header: 'Akurasi GPS', key: 'gpsAccuracy', width: 16 },
+      { header: 'Jarak dari Titik', key: 'distance', width: 18 },
+      { header: 'Validasi GPS', key: 'gpsStatus', width: 20 },
+      { header: 'UID NFC', key: 'nfcUid', width: 25 },
+      { header: 'Validasi NFC', key: 'nfcStatus', width: 20 },
+      { header: 'NFC Bypass', key: 'nfcBypass', width: 16 },
+      { header: 'Alasan Bypass', key: 'bypassReason', width: 24 },
+      { header: 'Catatan Bypass', key: 'bypassNote', width: 35 },
+      { header: 'Jumlah Jawaban', key: 'answerCount', width: 17 },
+      { header: 'Jumlah Foto Jawaban', key: 'answerPhotoCount', width: 21 },
+      { header: 'Jumlah Foto Patroli', key: 'patrolPhotoCount', width: 21 },
+      { header: 'Jumlah Temuan', key: 'findingCount', width: 17 },
+    ]);
+
+    const answerSheet = makeSheet('Jawaban & Foto', [
+      { header: 'ID Patroli', key: 'patrolId', width: 38 },
+      { header: 'Nomor Laporan', key: 'reportNumber', width: 25 },
+      { header: 'Petugas', key: 'user', width: 28 },
+      { header: 'Lokasi', key: 'site', width: 25 },
+      { header: 'Titik Patroli', key: 'point', width: 28 },
+      { header: 'ID Jawaban', key: 'answerId', width: 38 },
+      { header: 'ID Pertanyaan', key: 'questionId', width: 38 },
+      { header: 'Pertanyaan', key: 'question', width: 40 },
+      { header: 'Nilai Jawaban', key: 'answerValue', width: 25 },
+      { header: 'Label Jawaban', key: 'answerLabel', width: 28 },
+      { header: 'ID Foto', key: 'photoId', width: 38 },
+      { header: 'Nama File', key: 'fileName', width: 32 },
+      { header: 'MIME Type', key: 'mimeType', width: 20 },
+      { header: 'Ukuran File (byte)', key: 'fileSize', width: 20 },
+      { header: 'Latitude Foto', key: 'latitude', width: 18 },
+      { header: 'Longitude Foto', key: 'longitude', width: 18 },
+      { header: 'Waktu Foto', key: 'capturedAt', width: 23 },
+      { header: 'Foto Bukti', key: 'photo', width: 22 },
+    ]);
+
+    const patrolPhotoSheet = makeSheet('Foto Patroli', [
+      { header: 'ID Patroli', key: 'patrolId', width: 38 },
+      { header: 'Nomor Laporan', key: 'reportNumber', width: 25 },
+      { header: 'Petugas', key: 'user', width: 28 },
+      { header: 'Lokasi', key: 'site', width: 25 },
+      { header: 'Titik Patroli', key: 'point', width: 28 },
+      { header: 'ID Foto', key: 'photoId', width: 38 },
+      { header: 'Nama File', key: 'fileName', width: 32 },
+      { header: 'MIME Type', key: 'mimeType', width: 20 },
+      { header: 'Ukuran File (byte)', key: 'fileSize', width: 20 },
+      { header: 'Latitude Foto', key: 'latitude', width: 18 },
+      { header: 'Longitude Foto', key: 'longitude', width: 18 },
+      { header: 'Waktu Foto', key: 'capturedAt', width: 23 },
+      { header: 'Foto Bukti', key: 'photo', width: 22 },
+    ]);
+
+    const findingSheet = makeSheet('Temuan & Foto', [
+      { header: 'ID Patroli', key: 'patrolId', width: 38 },
+      { header: 'Nomor Laporan', key: 'reportNumber', width: 25 },
+      { header: 'Petugas Patroli', key: 'user', width: 28 },
+      { header: 'ID Temuan', key: 'findingId', width: 38 },
+      { header: 'Judul Temuan', key: 'title', width: 35 },
+      { header: 'Deskripsi', key: 'description', width: 45 },
+      { header: 'Tingkat Keparahan', key: 'severity', width: 22 },
+      { header: 'Status Temuan', key: 'status', width: 20 },
+      { header: 'Titik Temuan', key: 'point', width: 28 },
+      { header: 'Pelapor', key: 'reportedBy', width: 28 },
+      { header: 'Ditugaskan ke', key: 'assignedTo', width: 28 },
+      { header: 'Diselesaikan oleh', key: 'resolvedBy', width: 28 },
+      { header: 'Waktu Temuan', key: 'createdAt', width: 23 },
+      { header: 'Waktu Selesai', key: 'resolvedAt', width: 23 },
+      { header: 'Catatan Penyelesaian', key: 'resolutionNote', width: 38 },
+      { header: 'ID Foto', key: 'photoId', width: 38 },
+      { header: 'Nama File', key: 'fileName', width: 32 },
+      { header: 'MIME Type', key: 'mimeType', width: 20 },
+      { header: 'Ukuran File (byte)', key: 'fileSize', width: 20 },
+      { header: 'Foto Temuan', key: 'photo', width: 22 },
+    ]);
+
+    const dateValue = (value: Date | null | undefined) => value ?? null;
+
+    const personName = (
+      person: { fullName: string; employeeNumber: string | null } | null,
+    ) => {
+      if (!person) return '-';
+
+      return [person.fullName, person.employeeNumber]
+        .filter(Boolean)
+        .join(' - ');
+    };
+
+    const addPhotoToRow = async (
+      sheet: ExcelJS.Worksheet,
+      rowNumber: number,
+      photoColumn: number,
+      fileUrl: string | null,
+    ) => {
+      if (!fileUrl) return;
+
+      const photo = await readPhoto(fileUrl);
+
+      if (!photo) {
+        missingPhotos.push(fileUrl);
+        return;
+      }
+
+      // Konversi Buffer menjadi ArrayBuffer agar cocok
+      // dengan tipe yang diminta ExcelJS.
+      const imageBuffer = photo.buffer;
+
+      const arrayBuffer = imageBuffer.buffer.slice(
+        imageBuffer.byteOffset,
+        imageBuffer.byteOffset + imageBuffer.byteLength,
+      ) as ArrayBuffer;
+
+      const imageId = workbook.addImage({
+        buffer: arrayBuffer,
+        extension: photo.extension,
+      });
+
+      sheet.addImage(imageId, {
+        tl: {
+          col: photoColumn - 1,
+          row: rowNumber - 1,
+        },
+        ext: {
+          width: 110,
+          height: 75,
+        },
+        editAs: 'oneCell',
+      });
+
+      sheet.getRow(rowNumber).height = 82;
+      embeddedPhotos++;
+    };
+
+    for (const patrol of patrols) {
+      const patrolRow = patrolSheet.addRow({
+        id: patrol.id,
+        reportNumber: patrol.reportNumber,
+        userId: patrol.user.id,
+        employeeNumber: patrol.user.employeeNumber,
+        fullName: patrol.user.fullName,
+        username: patrol.user.username,
+        site: patrol.site.name,
+        pointCode: patrol.patrolPoint.code,
+        pointName: patrol.patrolPoint.name,
+        checkpoint:
+          patrol.checkpoint?.pointNameSnapshot ?? patrol.patrolPoint.name,
+        sequence: patrol.checkpoint?.sequence ?? null,
+        checkpointStatus: patrol.checkpoint?.status ?? null,
+        visitedAt: dateValue(patrol.checkpoint?.visitedAt),
+        startedAt: dateValue(patrol.startedAt),
+        completedAt: dateValue(patrol.completedAt),
+        status: patrol.status,
+        latitude: patrol.latitude,
+        longitude: patrol.longitude,
+        gpsAccuracy: patrol.gpsAccuracy,
+        distance: patrol.distanceFromPoint,
+        gpsStatus: patrol.gpsValidationStatus,
+        nfcUid: patrol.nfcUidSnapshot,
+        nfcStatus: patrol.nfcValidationStatus,
+        nfcBypass: patrol.nfcBypass,
+        bypassReason: patrol.nfcBypassReason,
+        bypassNote: patrol.nfcBypassNote,
+        answerCount: patrol.answers.length,
+        answerPhotoCount: patrol.answers.reduce(
+          (sum, answer) => sum + answer.photos.length,
+          0,
+        ),
+        patrolPhotoCount: patrol.photos.length,
+        findingCount: patrol.findings.length,
+      });
+
+      patrolRow.eachCell((cell) => {
+        cell.alignment = { vertical: 'middle', wrapText: true };
+      });
+
+      // Set format tanggal.
+      for (const column of [13, 14, 15]) {
+        patrolRow.getCell(column).numFmt = 'dd/mm/yyyy hh:mm';
+      }
+
+      for (const answer of patrol.answers) {
+        const photos = answer.photos.length ? answer.photos : [null];
+
+        for (const photo of photos) {
+          const row = answerSheet.addRow({
+            patrolId: patrol.id,
+            reportNumber: patrol.reportNumber,
+            user: patrol.user.fullName,
+            site: patrol.site.name,
+            point: patrol.patrolPoint.name,
+            answerId: answer.id,
+            questionId: answer.questionId,
+            question: answer.questionTextSnapshot,
+            answerValue: answer.answerValue,
+            answerLabel: answer.answerLabelSnapshot,
+            photoId: photo?.id ?? null,
+            fileName: photo?.fileName ?? null,
+            mimeType: photo?.mimeType ?? null,
+            fileSize: photo?.fileSize ?? null,
+            latitude: photo?.latitude ?? null,
+            longitude: photo?.longitude ?? null,
+            capturedAt: dateValue(photo?.capturedAt),
+          });
+
+          row.eachCell((cell) => {
+            cell.alignment = {
+              vertical: 'middle',
+              wrapText: true,
+            };
+          });
+
+          row.getCell(17).numFmt = 'dd/mm/yyyy hh:mm';
+
+          if (photo) {
+            await addPhotoToRow(answerSheet, row.number, 18, photo.fileUrl);
+          }
+        }
+      }
+
+      for (const photo of patrol.photos) {
+        const row = patrolPhotoSheet.addRow({
+          patrolId: patrol.id,
+          reportNumber: patrol.reportNumber,
+          user: patrol.user.fullName,
+          site: patrol.site.name,
+          point: patrol.patrolPoint.name,
+          photoId: photo.id,
+          fileName: photo.fileName,
+          mimeType: photo.mimeType,
+          fileSize: photo.fileSize,
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+          capturedAt: dateValue(photo.capturedAt),
+        });
+
+        row.eachCell((cell) => {
+          cell.alignment = {
+            vertical: 'middle',
+            wrapText: true,
+          };
+        });
+
+        row.getCell(12).numFmt = 'dd/mm/yyyy hh:mm';
+
+        await addPhotoToRow(patrolPhotoSheet, row.number, 13, photo.fileUrl);
+      }
+
+      for (const finding of patrol.findings) {
+        const photos = finding.photos.length ? finding.photos : [null];
+
+        for (const photo of photos) {
+          const row = findingSheet.addRow({
+            patrolId: patrol.id,
+            reportNumber: patrol.reportNumber,
+            user: patrol.user.fullName,
+            findingId: finding.id,
+            title: finding.title,
+            description: finding.description,
+            severity: finding.severity,
+            status: finding.status,
+            point: finding.patrolPoint.name,
+            reportedBy: personName(finding.reportedBy),
+            assignedTo: personName(finding.assignedTo),
+            resolvedBy: personName(finding.resolvedBy),
+            createdAt: dateValue(finding.createdAt),
+            resolvedAt: dateValue(finding.resolvedAt),
+            resolutionNote: finding.resolutionNote,
+            photoId: photo?.id ?? null,
+            fileName: photo?.fileName ?? null,
+            mimeType: photo?.mimeType ?? null,
+            fileSize: photo?.fileSize ?? null,
+          });
+
+          row.eachCell((cell) => {
+            cell.alignment = {
+              vertical: 'middle',
+              wrapText: true,
+            };
+          });
+
+          row.getCell(13).numFmt = 'dd/mm/yyyy hh:mm';
+          row.getCell(14).numFmt = 'dd/mm/yyyy hh:mm';
+
+          if (photo) {
+            await addPhotoToRow(findingSheet, row.number, 20, photo.fileUrl);
+          }
+        }
+      }
+    }
+
+    // Filter header di setiap sheet.
+    for (const sheet of workbook.worksheets) {
+      sheet.autoFilter = {
+        from: {
+          row: 1,
+          column: 1,
+        },
+        to: {
+          row: 1,
+          column: sheet.columnCount,
+        },
+      };
+    }
+
+    console.log('[PATROL EXPORT]', {
+      totalPatrols: patrols.length,
+      embeddedPhotos,
+      missingPhotos: missingPhotos.length,
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    return Buffer.from(buffer);
   }
 
   async getToday(userId: string) {

@@ -8,15 +8,17 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
-import type { User } from '../generated/prisma/client.js';
+import type { FindingStatus, User } from '../generated/prisma/client.js';
 import { AssignFindingDto } from './dto/assign-finding.dto.js';
 import { CreateFindingDto } from './dto/create-finding.dto.js';
 import { FindingQueryDto } from './dto/finding-query.dto.js';
@@ -32,6 +34,37 @@ export class FindingsController {
   @Post()
   create(@CurrentUser() user: User, @Body() dto: CreateFindingDto) {
     return this.findingsService.create(dto, user.id);
+  }
+
+  @Get('export/excel')
+  async exportFindingsExcel(
+    @Query('status') status: FindingStatus | undefined,
+    @Query('severity') severity: FindingQueryDto['severity'],
+    @Query('patrolId') patrolId: string | undefined,
+    @Query('patrolPointId') patrolPointId: string | undefined,
+    @Query('search') search: string | undefined,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.findingsService.exportFindings({
+      status,
+      severity,
+      patrolId,
+      patrolPointId,
+      search,
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="data-temuan-pamarea.xlsx"',
+    );
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Cache-Control', 'no-store');
+
+    return res.status(200).send(buffer);
   }
 
   @Get()

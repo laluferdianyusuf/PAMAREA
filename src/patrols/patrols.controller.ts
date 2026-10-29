@@ -8,6 +8,7 @@ import {
   Put,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -16,6 +17,7 @@ import {
 import { PatrolsService } from './patrols.service.js';
 
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
@@ -56,6 +58,37 @@ export class PatrolsController {
       startDate,
       endDate,
     });
+  }
+
+  @Get('export/excel')
+  async exportAllPatrolsExcel(
+    @Query('search') search: string | undefined,
+    @Query('status') status: PatrolStatus | undefined,
+    @Query('startDate') startDate: string | undefined,
+    @Query('endDate') endDate: string | undefined,
+    @Res() res: Response,
+  ) {
+    const buffer = await this.patrolsService.exportAllPatrolsGroupedByUser({
+      search,
+      status,
+      startDate,
+      endDate,
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="data-patroli-pamarea.xlsx"',
+    );
+
+    res.setHeader('Content-Length', buffer.length);
+    res.setHeader('Cache-Control', 'no-store');
+
+    return res.status(200).send(buffer);
   }
 
   @Post('checkpoints/:checkpointId/start')

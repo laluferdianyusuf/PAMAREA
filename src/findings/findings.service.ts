@@ -4,6 +4,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 
+import ExcelJS from 'exceljs';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { AuditLogService } from '../audit/audit.service.js';
 import { UploadedFile } from '../common/types/uploaded-file.type.js';
 import { Prisma } from '../generated/prisma/client.js';
@@ -89,6 +92,272 @@ export class FindingsService {
 
       return finding;
     });
+  }
+
+  async exportFindings(params?: {
+    status?: FindingStatus;
+    severity?: FindingQueryDto['severity'];
+    patrolId?: string;
+    patrolPointId?: string;
+    search?: string;
+  }): Promise<Buffer> {
+    const search = params?.search?.trim();
+
+    const where: Prisma.FindingWhereInput = {
+      ...(params?.status && { status: params.status }),
+      ...(params?.severity && { severity: params.severity }),
+      ...(params?.patrolId && { patrolId: params.patrolId }),
+      ...(params?.patrolPointId && {
+        patrolPointId: params.patrolPointId,
+      }),
+      ...(search && {
+        OR: [
+          {
+            title: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+          {
+            description: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+          {
+            reportedBy: {
+              fullName: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+          {
+            patrol: {
+              reportNumber: {
+                contains: search,
+                mode: 'insensitive',
+              },
+            },
+          },
+        ],
+      }),
+    };
+
+    const findings = await this.prisma.finding.findMany({
+      where,
+      include: this.detailInclude,
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'PAMAREA';
+    workbook.created = new Date();
+
+    const uploadDir = path.resolve(
+      process.env.UPLOAD_DIR || path.join(process.cwd(), 'upload'),
+    );
+
+    let embeddedPhotos = 0;
+    const missingPhotos: string[] = [];
+
+    const sheet = workbook.addWorksheet('Data Temuan');
+
+    sheet.columns = [
+      { header: 'ID Temuan', key: 'id', width: 38 },
+      { header: 'ID Patroli', key: 'patrolId', width: 38 },
+      { header: 'Nomor Laporan', key: 'reportNumber', width: 25 },
+      { header: 'Judul', key: 'title', width: 35 },
+      { header: 'Deskripsi', key: 'description', width: 45 },
+      { header: 'Tingkat Keparahan', key: 'severity', width: 22 },
+      { header: 'Status', key: 'status', width: 20 },
+      { header: 'Kode Titik', key: 'pointCode', width: 18 },
+      { header: 'Titik Patroli', key: 'pointName', width: 28 },
+      { header: 'Lokasi/Site', key: 'siteName', width: 25 },
+      { header: 'Pelapor', key: 'reportedBy', width: 30 },
+      { header: 'Ditugaskan ke', key: 'assignedTo', width: 30 },
+      { header: 'Diselesaikan oleh', key: 'resolvedBy', width: 30 },
+      { header: 'Waktu Temuan', key: 'createdAt', width: 23 },
+      { header: 'Waktu Selesai', key: 'resolvedAt', width: 23 },
+      { header: 'Catatan Penyelesaian', key: 'resolutionNote', width: 38 },
+      { header: 'ID Foto', key: 'photoId', width: 38 },
+      { header: 'Nama File', key: 'fileName', width: 32 },
+      { header: 'MIME Type', key: 'mimeType', width: 22 },
+      { header: 'Ukuran File (byte)', key: 'fileSize', width: 20 },
+      { header: 'Foto Bukti', key: 'photo', width: 22 },
+    ];
+
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    const header = sheet.getRow(1);
+    header.font = {
+      bold: true,
+      color: { argb: 'FFFFFFFF' },
+    };
+    header.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF1F4E78' },
+    };
+    header.alignment = {
+      vertical: 'middle',
+      wrapText: true,
+    };
+    header.height = 28;
+
+    const readPhoto = async (
+      fileUrl: string,
+    ): Promise<{
+      buffer: Buffer;
+      extension: 'jpeg' | 'png';
+    } | null> => {
+      try {
+        let relativePath = fileUrl;
+
+        if (/^https?:\/\//i.test(fileUrl)) {
+          relativePath = decodeURIComponent(new URL(fileUrl).pathname);
+        }
+
+        relativePath = relativePath.replace(/^\/+/, '');
+        relativePath = relativePath.replace(
+          /^(?:uploads?|public\/uploads?)\//i,
+          '',
+        );
+
+        const fullPath = path.resolve(uploadDir, relativePath);
+        const relative = path.relative(uploadDir, fullPath);
+
+        if (
+          !relative ||
+          relative === '..' ||
+          relative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relative)
+        ) {
+          return null;
+        }
+
+        const buffer = await fs.readFile(fullPath);
+        const extension = path.extname(fullPath).toLowerCase();
+
+        if (extension === '.jpg' || extension === '.jpeg') {
+          return { buffer, extension: 'jpeg' };
+        }
+
+        if (extension === '.png') {
+          return { buffer, extension: 'png' };
+        }
+
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    const personName = (
+      person: {
+        fullName: string;
+        username: string;
+      } | null,
+    ) => {
+      if (!person) return '-';
+      return `${person.fullName} (${person.username})`;
+    };
+
+    for (const finding of findings) {
+      // Satu baris per temuan jika tidak memiliki foto.
+      // Jika memiliki beberapa foto, setiap foto mendapat satu baris.
+      const photos = finding.photos.length ? finding.photos : [null];
+
+      for (const photo of photos) {
+        const row = sheet.addRow({
+          id: finding.id,
+          patrolId: finding.patrolId,
+          reportNumber: finding.patrolId,
+          title: finding.title,
+          description: finding.description,
+          severity: finding.severity,
+          status: finding.status,
+          pointCode: finding.patrolPoint.code,
+          pointName: finding.patrolPoint.name,
+          siteName: finding.patrolPoint.site.name,
+          reportedBy: personName(finding.reportedBy),
+          assignedTo: personName(finding.assignedTo),
+          resolvedBy: personName(finding.resolvedBy),
+          createdAt: finding.createdAt,
+          resolvedAt: finding.resolvedAt,
+          resolutionNote: finding.resolutionNote,
+          photoId: photo?.id ?? null,
+          fileName: photo?.fileName ?? null,
+          mimeType: photo?.mimeType ?? null,
+          fileSize: photo?.fileSize ?? null,
+        });
+
+        row.eachCell((cell) => {
+          cell.alignment = {
+            vertical: 'middle',
+            wrapText: true,
+          };
+        });
+
+        row.getCell(14).numFmt = 'dd/mm/yyyy hh:mm';
+        row.getCell(15).numFmt = 'dd/mm/yyyy hh:mm';
+
+        if (!photo?.fileUrl) continue;
+
+        const image = await readPhoto(photo.fileUrl);
+
+        if (!image) {
+          missingPhotos.push(photo.fileUrl);
+          continue;
+        }
+
+        // Konversi ke ArrayBuffer agar kompatibel
+        // dengan tipe ExcelJS pada konfigurasi TypeScript kamu.
+        const imageBuffer = image.buffer;
+        const arrayBuffer = imageBuffer.buffer.slice(
+          imageBuffer.byteOffset,
+          imageBuffer.byteOffset + imageBuffer.byteLength,
+        ) as ArrayBuffer;
+
+        const imageId = workbook.addImage({
+          buffer: arrayBuffer,
+          extension: image.extension,
+        });
+
+        sheet.addImage(imageId, {
+          tl: {
+            col: 20,
+            row: row.number - 1,
+          },
+          ext: {
+            width: 110,
+            height: 75,
+          },
+          editAs: 'oneCell',
+        });
+
+        row.height = 82;
+        embeddedPhotos++;
+      }
+    }
+
+    if (sheet.rowCount > 0) {
+      sheet.autoFilter = {
+        from: { row: 1, column: 1 },
+        to: { row: 1, column: sheet.columnCount },
+      };
+    }
+
+    console.log('[FINDING EXPORT]', {
+      totalFindings: findings.length,
+      embeddedPhotos,
+      missingPhotos: missingPhotos.length,
+    });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 
   async findAll(query: FindingQueryDto, userId: string) {
