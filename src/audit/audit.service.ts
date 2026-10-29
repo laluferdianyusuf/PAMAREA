@@ -56,6 +56,37 @@ export class AuditLogService {
         orderBy: {
           createdAt: 'desc',
         },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              employeeNumber: true,
+              role: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+              devices: {
+                select: {
+                  id: true,
+                  deviceIdentifier: true,
+                  osVersion: true,
+                  platform: true,
+                },
+              },
+
+              sessions: {
+                select: {
+                  id: true,
+                  revokedAt: true,
+                  expiresAt: true,
+                },
+              },
+            },
+          },
+        },
         skip,
         take: limit,
       }),
