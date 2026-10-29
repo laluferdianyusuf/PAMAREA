@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UploadedFile,
   UseGuards,
@@ -17,8 +18,9 @@ import { PatrolsService } from './patrols.service.js';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
+import { Roles } from '../common/decorators/roles.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
-import type { User } from '../generated/prisma/client.js';
+import type { PatrolStatus, User } from '../generated/prisma/client.js';
 import { BypassNfcDto } from './dto/bypass-nfc.dto.js';
 import { StartPatrolDto } from './dto/start-patrol.dto.js';
 import { SubmitAnswersDto } from './dto/submit-answers.dto.js';
@@ -34,6 +36,26 @@ export class PatrolsController {
   @Get('today')
   getToday(@CurrentUser() user: User) {
     return this.patrolsService.getToday(user.id);
+  }
+
+  @Get('history/grouped-by-user')
+  @Roles('ADMIN')
+  async getAllPatrolsGroupedByUser(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('status') status?: PatrolStatus,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.patrolsService.getAllPatrolsGroupedByUser({
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 20,
+      search,
+      status,
+      startDate,
+      endDate,
+    });
   }
 
   @Post('checkpoints/:checkpointId/start')

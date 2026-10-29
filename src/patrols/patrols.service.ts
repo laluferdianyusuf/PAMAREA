@@ -35,6 +35,280 @@ export class PatrolsService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  async getAllPatrolsGroupedByUser(params?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    status?: PatrolStatus;
+    startDate?: string;
+    endDate?: string;
+  }) {
+    const page = Math.max(1, Math.floor(params?.page ?? 1));
+    const limit = Math.min(100, Math.max(1, Math.floor(params?.limit ?? 20)));
+    const skip = (page - 1) * limit;
+
+    const search = params?.search?.trim();
+
+    const where = {
+      ...(params?.status && {
+        status: params.status,
+      }),
+      ...(params?.startDate || params?.endDate
+        ? {
+            startedAt: {
+              ...(params.startDate && {
+                gte: new Date(params.startDate),
+              }),
+              ...(params.endDate && {
+                lte: new Date(params.endDate),
+              }),
+            },
+          }
+        : {}),
+      ...(search
+        ? {
+            OR: [
+              {
+                reportNumber: {
+                  contains: search,
+                  mode: 'insensitive' as const,
+                },
+              },
+              {
+                user: {
+                  fullName: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
+              {
+                user: {
+                  employeeNumber: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
+              {
+                user: {
+                  username: {
+                    contains: search,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [patrols, total] = await Promise.all([
+      this.prisma.patrol.findMany({
+        where,
+        select: {
+          id: true,
+          reportNumber: true,
+          startedAt: true,
+          completedAt: true,
+          status: true,
+
+          latitude: true,
+          longitude: true,
+          gpsAccuracy: true,
+          distanceFromPoint: true,
+          gpsValidationStatus: true,
+
+          nfcUidSnapshot: true,
+          nfcValidationStatus: true,
+          nfcBypass: true,
+          nfcBypassReason: true,
+          nfcBypassNote: true,
+
+          user: {
+            select: {
+              id: true,
+              employeeNumber: true,
+              fullName: true,
+              username: true,
+            },
+          },
+
+          site: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+
+          patrolPoint: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              latitude: true,
+              longitude: true,
+            },
+          },
+
+          checkpoint: {
+            select: {
+              id: true,
+              sequence: true,
+              status: true,
+              pointCodeSnapshot: true,
+              pointNameSnapshot: true,
+              visitedAt: true,
+            },
+          },
+
+          answers: {
+            select: {
+              id: true,
+              questionId: true,
+              questionTextSnapshot: true,
+              answerValue: true,
+              answerLabelSnapshot: true,
+
+              photos: {
+                select: {
+                  id: true,
+                  fileUrl: true,
+                  fileName: true,
+                  mimeType: true,
+                  fileSize: true,
+                  latitude: true,
+                  longitude: true,
+                  capturedAt: true,
+                },
+              },
+            },
+            orderBy: {
+              createdAt: 'asc',
+            },
+          },
+
+          photos: {
+            where: {
+              answerId: null,
+            },
+            select: {
+              id: true,
+              fileUrl: true,
+              fileName: true,
+              mimeType: true,
+              fileSize: true,
+              latitude: true,
+              longitude: true,
+              capturedAt: true,
+            },
+          },
+
+          findings: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              severity: true,
+              status: true,
+              resolvedAt: true,
+              resolutionNote: true,
+              createdAt: true,
+
+              patrolPoint: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                },
+              },
+
+              reportedBy: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  employeeNumber: true,
+                },
+              },
+
+              assignedTo: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  employeeNumber: true,
+                },
+              },
+
+              resolvedBy: {
+                select: {
+                  id: true,
+                  fullName: true,
+                  employeeNumber: true,
+                },
+              },
+
+              photos: {
+                select: {
+                  id: true,
+                  fileUrl: true,
+                  fileName: true,
+                  mimeType: true,
+                  fileSize: true,
+                  createdAt: true,
+                },
+              },
+            },
+            orderBy: {
+              createdAt: 'desc',
+            },
+          },
+        },
+        orderBy: {
+          startedAt: 'desc',
+        },
+        skip,
+        take: limit,
+      }),
+
+      this.prisma.patrol.count({ where }),
+    ]);
+
+    type PatrolItem = (typeof patrols)[number];
+
+    const grouped = new Map<
+      string,
+      {
+        user: PatrolItem['user'];
+        patrols: Omit<PatrolItem, 'user'>[];
+      }
+    >();
+
+    for (const patrol of patrols) {
+      const { user, ...patrolData } = patrol;
+
+      if (!grouped.has(user.id)) {
+        grouped.set(user.id, {
+          user,
+          patrols: [],
+        });
+      }
+
+      grouped.get(user.id)!.patrols.push(patrolData);
+    }
+
+    return {
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+      totalUsers: grouped.size,
+      totalPatrols: patrols.length,
+      data: Array.from(grouped.values()),
+    };
+  }
+
   async getToday(userId: string) {
     const today = this.startOfToday();
 
