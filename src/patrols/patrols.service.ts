@@ -50,6 +50,7 @@ export class PatrolsService {
     const search = params?.search?.trim();
 
     const where = {
+      status: PatrolStatus.SUBMITTED,
       ...(params?.status && {
         status: params.status,
       }),
