@@ -9,7 +9,6 @@ import { PatrolScheduleGenerationController } from './controllers/patrol.schedul
 import { PatrolSchedulePointController } from './controllers/patrol.schedule.point.controller.js';
 import { PatrolScheduleAssignmentController } from './controllers/schedule.assignment.controller.js';
 import { ShiftChangeController } from './controllers/shift.change.controller.js';
-import { ScheduleCronService } from './cron/schedule.cron.service.js';
 import { PatrolSchedulePolicy } from './policies/patrol.schedule.policy.service.js';
 import { PatrolScheduleRepository } from './repositories/patrol-schedule.repository.js';
 import { PatrolScheduleAssignmentRouteService } from './services/patrol-schedule-assignment-route.service.js';
@@ -48,7 +47,7 @@ import { ShiftChangeService } from './services/shift.change.service.js';
     ScheduleGenerationService,
     PatrolRoundService,
     PatrolCheckpointService,
-    ScheduleCronService,
+    // ScheduleCronService,
     ShiftChangeService,
     PatrolScheduleAssignmentRouteService,
   ],
