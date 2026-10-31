@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  PatrolPointStatus,
   Prisma,
   QuestionStatus,
   QuestionType,
@@ -37,7 +38,13 @@ export class QuestionsService {
 
       _count: {
         select: {
-          pointQuestions: true,
+          pointQuestions: {
+            where: {
+              patrolPoint: {
+                status: PatrolPointStatus.ACTIVE,
+              },
+            },
+          },
           patrolAnswers: true,
         },
       },
