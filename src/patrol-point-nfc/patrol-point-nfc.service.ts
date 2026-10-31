@@ -37,9 +37,7 @@ export class PatrolPointNfcService {
         }
 
         if (patrolPoint.status !== 'INACTIVE') {
-          throw new ConflictException(
-            `Patrol point tidak dapat di-assign karena statusnya ${patrolPoint.status}. Patrol point harus INACTIVE.`,
-          );
+          throw new ConflictException(`Patrol point sudah aktif`);
         }
 
         const nfcTag = await tx.nfcTag.findUnique({
@@ -135,6 +133,114 @@ export class PatrolPointNfcService {
         });
 
         return assignment;
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+  }
+
+  async unassign(
+    patrolPointId: string,
+    dto: RemoveNfcAssignmentDto,
+    actorId: string,
+  ) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const patrolPoint = await tx.patrolPoint.findUnique({
+          where: {
+            id: patrolPointId,
+          },
+        });
+
+        if (!patrolPoint) {
+          throw new NotFoundException('Patrol point tidak ditemukan');
+        }
+
+        const assignment = await tx.patrolPointNfc.findFirst({
+          where: {
+            patrolPointId,
+            status: NfcAssignmentStatus.ACTIVE,
+          },
+        });
+
+        if (!assignment) {
+          throw new NotFoundException('Patrol point tidak memiliki NFC aktif');
+        }
+
+        const nfcTag = await tx.nfcTag.findUnique({
+          where: {
+            id: assignment.nfcTagId,
+          },
+        });
+
+        if (!nfcTag) {
+          throw new NotFoundException('NFC Tag tidak ditemukan');
+        }
+
+        const updatedAssignment = await tx.patrolPointNfc.update({
+          where: {
+            id: assignment.id,
+          },
+          data: {
+            status: NfcAssignmentStatus.REMOVED,
+            unassignedAt: new Date(),
+            reason: dto.reason?.trim() || 'Assignment removed',
+          },
+          include: this.assignmentInclude(),
+        });
+
+        const updatedNfcTag = await tx.nfcTag.update({
+          where: {
+            id: nfcTag.id,
+          },
+          data: {
+            status: NfcStatus.UNASSIGNED,
+          },
+        });
+
+        const updatedPatrolPoint = await tx.patrolPoint.update({
+          where: {
+            id: patrolPointId,
+          },
+          data: {
+            status: 'INACTIVE',
+          },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'REMOVE_NFC_ASSIGNMENT',
+          entityType: 'PatrolPointNfc',
+          entityId: assignment.id,
+          oldData: {
+            assignmentId: assignment.id,
+            assignmentStatus: assignment.status,
+
+            patrolPointId: patrolPoint.id,
+            patrolPointStatus: patrolPoint.status,
+
+            nfcTagId: nfcTag.id,
+            nfcTagUid: nfcTag.uid,
+            nfcTagStatus: nfcTag.status,
+          },
+          newData: {
+            assignmentId: updatedAssignment.id,
+            assignmentStatus: updatedAssignment.status,
+
+            patrolPointId: updatedPatrolPoint.id,
+            patrolPointStatus: updatedPatrolPoint.status,
+
+            nfcTagId: updatedNfcTag.id,
+            nfcTagUid: updatedNfcTag.uid,
+            nfcTagStatus: updatedNfcTag.status,
+
+            reason: updatedAssignment.reason,
+            unassignedAt: updatedAssignment.unassignedAt,
+          },
+        });
+
+        return updatedAssignment;
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
@@ -92,5 +93,14 @@ export class PatrolPointNfcController {
     @CurrentUser() user: User,
   ) {
     return this.service.remove(id, dto, user.id);
+  }
+
+  @Delete(':patrolPointId/unassign')
+  unassign(
+    @Param('patrolPointId', ParseUUIDPipe) patrolPointId: string,
+    @Body() dto: RemoveNfcAssignmentDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.service.unassign(patrolPointId, dto, actorId);
   }
 }

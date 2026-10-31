@@ -237,17 +237,15 @@ export class UsersService {
       throw new NotFoundException('Role tidak ditemukan.');
     }
 
-    if (role.name === 'SECURITY' && !dto.siteId) {
-      throw new BadRequestException('Site wajib diisi untuk user SECURITY.');
+    if (!dto.siteId) {
+      throw new BadRequestException('Site wajib diisi');
     }
 
-    if ((dto.teamId || dto.team) && role.name !== 'SECURITY') {
-      throw new BadRequestException(
-        'Regu hanya dapat diberikan kepada user SECURITY.',
-      );
+    if (!dto.teamId && !dto.team && dto.teamId !== undefined) {
+      throw new BadRequestException('Regu harus dipilih');
     }
 
-    if (role.name === 'SECURITY' && !dto.teamId && !dto.team) {
+    if (!dto.teamId) {
       throw new BadRequestException(
         'Pilih regu yang sudah ada atau isi data regu baru.',
       );
@@ -444,14 +442,12 @@ export class UsersService {
       throw new NotFoundException('Role tidak ditemukan.');
     }
 
-    if (nextRole.name === 'SECURITY' && !nextSiteId) {
-      throw new BadRequestException('Site wajib diisi untuk user SECURITY.');
+    if (!nextSiteId) {
+      throw new BadRequestException('Site wajib diisi');
     }
 
-    if ((dto.teamId || dto.team) && nextRole.name !== 'SECURITY') {
-      throw new BadRequestException(
-        'Regu hanya dapat diberikan kepada user SECURITY.',
-      );
+    if (!dto.teamId && !dto.team && dto.teamId !== undefined) {
+      throw new BadRequestException('Regu harus dipilih');
     }
 
     const passwordHash = dto.password

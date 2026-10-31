@@ -97,6 +97,11 @@ export class PatrolPointsService {
             patrolPointId: true,
             nfcTagId: true,
             status: true,
+            nfcTag: {
+              select: {
+                uid: true,
+              },
+            },
           },
         },
 
@@ -131,20 +136,46 @@ export class PatrolPointsService {
           : {}),
       },
 
-      orderBy: {
-        code: 'asc',
-      },
+      orderBy: [
+        { siteId: 'asc' },
+        {
+          code: 'asc',
+        },
+      ],
 
-      select: {
-        id: true,
-        siteId: true,
-        code: true,
-        name: true,
-        description: true,
-        latitude: true,
-        longitude: true,
-        radiusMeters: true,
-        status: true,
+      include: {
+        site: {
+          select: { id: true, code: true, name: true, status: true },
+        },
+
+        nfcAssignments: {
+          select: {
+            id: true,
+            patrolPointId: true,
+            nfcTagId: true,
+            status: true,
+            nfcTag: {
+              select: {
+                uid: true,
+              },
+            },
+          },
+        },
+
+        schedulePoints: {
+          select: {
+            id: true,
+            scheduleId: true,
+          },
+        },
+
+        _count: {
+          select: {
+            assignments: true,
+            patrols: true,
+            findings: true,
+          },
+        },
       },
     });
   }

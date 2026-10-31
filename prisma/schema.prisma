@@ -168,6 +168,23 @@ enum TeamStatus {
   INACTIVE
 }
 
+enum AbsenceType {
+  CUTI
+  SAKIT
+  IZIN
+  ALPHA
+}
+
+enum AbsenceStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum ReplacementStatus {
+  ACTIVE
+  CANCELLED
+}
+
 // ============================================================
 // ROLE
 // ============================================================
@@ -211,6 +228,8 @@ model Site {
   patrolPoints PatrolPoint[]
 
   schedules PatrolSchedule[]
+
+  absences SecurityAbsence[]
 
   patrols Patrol[]
 
@@ -268,6 +287,14 @@ model User {
   sessions Session[]
 
   devices UserDevice[]
+
+  absences SecurityAbsence[] @relation("AbsenceUser")
+
+  createdAbsences SecurityAbsence[] @relation("AbsenceCreator")
+
+  replacementsAsUser ScheduleReplacement[] @relation("ReplacementUser")
+
+  createdReplacements ScheduleReplacement[] @relation("ReplacementCreator")
 
   patrolAssignments PatrolAssignment[] @relation("UserPatrolAssignment")
 
@@ -780,6 +807,10 @@ model PatrolScheduleAssignment {
   shiftChangesAsFirst  ShiftChange[] @relation("ShiftChangeFirstAssignment")
   shiftChangesAsSecond ShiftChange[] @relation("ShiftChangeSecondAssignment")
 
+  replacementsAsOriginal ScheduleReplacement[] @relation("ReplacementOriginalAssignment")
+
+  replacementRecord ScheduleReplacement? @relation("ReplacementAssignment")
+
   @@unique([scheduleId, userId, startDate])
   @@index([scheduleId, status])
   @@index([userId, status])
@@ -833,6 +864,75 @@ model ShiftChange {
   @@index([firstAssignmentId, effectiveDate])
   @@index([secondAssignmentId, effectiveDate])
   @@map("shift_changes")
+}
+
+model SecurityAbsence {
+  id String @id @default(uuid()) @db.Uuid
+
+  userId      String @map("user_id") @db.Uuid
+  siteId      String @map("site_id") @db.Uuid
+  createdById String @map("created_by_id") @db.Uuid
+
+  type      AbsenceType
+  startDate DateTime    @map("start_date") @db.Date
+  endDate   DateTime    @map("end_date") @db.Date
+
+  reason String? @db.VarChar(500)
+
+  status AbsenceStatus @default(ACTIVE)
+
+  user User @relation("AbsenceUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  createdBy User @relation("AbsenceCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  replacements ScheduleReplacement[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, status])
+  @@index([siteId, startDate, endDate])
+  @@index([status, startDate, endDate])
+  @@map("security_absences")
+}
+
+model ScheduleReplacement {
+  id String @id @default(uuid()) @db.Uuid
+
+  absenceId String @map("absence_id") @db.Uuid
+
+  originalAssignmentId String @map("original_assignment_id") @db.Uuid
+
+  replacementAssignmentId String @unique @map("replacement_assignment_id") @db.Uuid
+
+  replacementUserId String @map("replacement_user_id") @db.Uuid
+
+  createdById String @map("created_by_id") @db.Uuid
+
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+
+  status ReplacementStatus @default(ACTIVE)
+
+  absence SecurityAbsence @relation(fields: [absenceId], references: [id], onDelete: Restrict)
+
+  originalAssignment PatrolScheduleAssignment @relation("ReplacementOriginalAssignment", fields: [originalAssignmentId], references: [id], onDelete: Restrict)
+
+  replacementAssignment PatrolScheduleAssignment @relation("ReplacementAssignment", fields: [replacementAssignmentId], references: [id], onDelete: Restrict)
+
+  replacementUser User @relation("ReplacementUser", fields: [replacementUserId], references: [id], onDelete: Restrict)
+
+  createdBy User @relation("ReplacementCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([absenceId, status])
+  @@index([originalAssignmentId, status])
+  @@index([replacementUserId, startDate, endDate])
+  @@map("schedule_replacements")
 }
 
 // ============================================================

@@ -437,6 +437,7 @@ export class PatrolScheduleService {
           employeeNumber: assign.user.employeeNumber,
           fullName: assign.user.fullName,
           shifts: {},
+          shiftDetails: {},
         });
       }
 
@@ -495,6 +496,158 @@ export class PatrolScheduleService {
         }
 
         cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    }
+
+    const absences = await this.prisma.securityAbsence.findMany({
+      where: {
+        siteId,
+        status: 'ACTIVE',
+        startDate: {
+          lte: endDate,
+        },
+        endDate: {
+          gte: startDate,
+        },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            employeeNumber: true,
+          },
+        },
+        replacements: {
+          where: {
+            status: 'ACTIVE',
+          },
+          include: {
+            replacementUser: {
+              select: {
+                id: true,
+                fullName: true,
+                employeeNumber: true,
+              },
+            },
+            originalAssignment: {
+              include: {
+                schedule: {
+                  select: {
+                    name: true,
+                    startTime: true,
+                    endTime: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+
+    for (const absence of absences) {
+      const originalUserId = absence.user.id;
+
+      if (!rosterMap.has(originalUserId)) {
+        rosterMap.set(originalUserId, {
+          userId: originalUserId,
+          employeeNumber: absence.user.employeeNumber,
+          fullName: absence.user.fullName,
+          shifts: {},
+          shiftDetails: {},
+        });
+      }
+
+      const originalUserData = rosterMap.get(originalUserId);
+
+      const absenceStart =
+        absence.startDate > startDate ? absence.startDate : startDate;
+
+      const absenceEnd = absence.endDate < endDate ? absence.endDate : endDate;
+
+      const cursor = new Date(
+        Date.UTC(
+          absenceStart.getUTCFullYear(),
+          absenceStart.getUTCMonth(),
+          absenceStart.getUTCDate(),
+        ),
+      );
+
+      const lastDate = Date.UTC(
+        absenceEnd.getUTCFullYear(),
+        absenceEnd.getUTCMonth(),
+        absenceEnd.getUTCDate(),
+      );
+
+      while (cursor.getTime() <= lastDate) {
+        const dateString = cursor.toISOString().slice(0, 10);
+
+        // C = Cuti/ketidakhadiran.
+        // Jenis detail sebenarnya disimpan di shiftDetails.
+        originalUserData.shifts[dateString] = 'C';
+
+        originalUserData.shiftDetails[dateString] = {
+          type: absence.type,
+          status: 'ABSENT',
+          reason: absence.reason,
+        };
+
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+
+      for (const replacement of absence.replacements) {
+        const replacementUser = replacement.replacementUser;
+        const replacementUserId = replacementUser.id;
+
+        if (!rosterMap.has(replacementUserId)) {
+          rosterMap.set(replacementUserId, {
+            userId: replacementUserId,
+            employeeNumber: replacementUser.employeeNumber,
+            fullName: replacementUser.fullName,
+            shifts: {},
+            shiftDetails: {},
+          });
+        }
+
+        const replacementUserData = rosterMap.get(replacementUserId);
+
+        const replacementStart =
+          replacement.startDate > startDate ? replacement.startDate : startDate;
+
+        const replacementEnd =
+          replacement.endDate < endDate ? replacement.endDate : endDate;
+
+        const replacementCursor = new Date(
+          Date.UTC(
+            replacementStart.getUTCFullYear(),
+            replacementStart.getUTCMonth(),
+            replacementStart.getUTCDate(),
+          ),
+        );
+
+        const replacementLastDate = Date.UTC(
+          replacementEnd.getUTCFullYear(),
+          replacementEnd.getUTCMonth(),
+          replacementEnd.getUTCDate(),
+        );
+
+        while (replacementCursor.getTime() <= replacementLastDate) {
+          const dateString = replacementCursor.toISOString().slice(0, 10);
+
+          replacementUserData.shiftDetails[dateString] = {
+            type: 'REPLACEMENT',
+            status: 'REPLACEMENT',
+            replacedUser: {
+              id: absence.user.id,
+              fullName: absence.user.fullName,
+            },
+            absenceType: absence.type,
+            schedule: replacement.originalAssignment.schedule,
+          };
+
+          replacementCursor.setUTCDate(replacementCursor.getUTCDate() + 1);
+        }
       }
     }
 

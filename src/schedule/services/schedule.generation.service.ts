@@ -44,6 +44,16 @@ export class ScheduleGenerationService {
               include: { patrolPoint: true },
               orderBy: { sequence: 'asc' },
             },
+            replacementsAsOriginal: {
+              where: {
+                status: 'ACTIVE',
+              },
+              select: {
+                startDate: true,
+                endDate: true,
+                status: true,
+              },
+            },
           },
         },
       },
@@ -187,9 +197,25 @@ export class ScheduleGenerationService {
       };
     }
 
-    const assignments = schedule.assignments.filter((assignment: any) =>
-      this.isAssignmentActive(assignment, date),
-    );
+    const assignments = schedule.assignments.filter((assignment: any) => {
+      const assignmentIsActive = this.isAssignmentActive(assignment, date);
+
+      if (!assignmentIsActive) {
+        return false;
+      }
+
+      const isBeingReplaced = (assignment.replacementsAsOriginal ?? []).some(
+        (replacement: any) => {
+          return (
+            replacement.status === 'ACTIVE' &&
+            date >= replacement.startDate &&
+            date <= replacement.endDate
+          );
+        },
+      );
+
+      return !isBeingReplaced;
+    });
 
     const rounds = this.buildRounds(
       date,

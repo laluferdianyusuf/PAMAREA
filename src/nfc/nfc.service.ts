@@ -585,6 +585,20 @@ export class NfcService {
           fullName: true,
         },
       },
+      assignments: {
+        select: {
+          status: true,
+          unassignedAt: true,
+          patrolPoint: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              status: true,
+            },
+          },
+        },
+      },
       _count: {
         select: {
           assignments: true,

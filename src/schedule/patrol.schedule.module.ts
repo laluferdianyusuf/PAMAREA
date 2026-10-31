@@ -18,6 +18,8 @@ import { PatrolScheduleAssignmentService } from './services/patrol.schedule.assi
 import { PatrolScheduleDateService } from './services/patrol.schedule.date.service.js';
 import { PatrolSchedulePointService } from './services/patrol.schedule.point.service.js';
 import { PatrolScheduleService } from './services/patrol.schedule.service.js';
+import { RosterExcelService } from './services/roster-excel.service.js';
+import { RosterImportService } from './services/roster-import.service.js';
 import { ScheduleGenerationService } from './services/schedule.generation.service.js';
 import { ShiftChangeService } from './services/shift.change.service.js';
 
@@ -50,6 +52,9 @@ import { ShiftChangeService } from './services/shift.change.service.js';
     // ScheduleCronService,
     ShiftChangeService,
     PatrolScheduleAssignmentRouteService,
+
+    RosterExcelService,
+    RosterImportService,
   ],
 
   exports: [
