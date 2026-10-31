@@ -419,6 +419,7 @@ export class UsersService {
     }
 
     const nextRoleId = dto.roleId ?? existingUser.roleId;
+
     const nextSiteId =
       dto.siteId !== undefined ? dto.siteId : existingUser.siteId;
 
@@ -440,11 +441,11 @@ export class UsersService {
     }
 
     if (!nextSiteId) {
-      throw new BadRequestException('Site wajib diisi');
+      throw new BadRequestException('Site wajib dipilih.');
     }
 
     if (!dto.teamId && !dto.team && dto.teamId !== undefined) {
-      throw new BadRequestException('Regu harus dipilih');
+      throw new BadRequestException('Regu wajib dipilih.');
     }
 
     const passwordHash = dto.password
@@ -453,14 +454,26 @@ export class UsersService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
+        const site = await tx.site.findFirst({
+          where: {
+            id: nextSiteId,
+            status: 'ACTIVE',
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        if (!site) {
+          throw new NotFoundException('Site tidak ditemukan atau tidak aktif.');
+        }
+
         let teamId: string | null = existingUser.teamId ?? null;
 
-        if (nextRole.name !== 'SECURITY') {
-          teamId = null;
-        } else if (dto.team) {
+        if (dto.team) {
           const team = await tx.team.create({
             data: {
-              siteId: nextSiteId!,
+              siteId: nextSiteId,
               name: dto.team.name.trim(),
               code: dto.team.code.trim().toUpperCase(),
               description: dto.team.description?.trim() || null,
@@ -472,11 +485,15 @@ export class UsersService {
           });
 
           teamId = team.id;
-        } else if (dto.teamId) {
+        } else if (dto.teamId !== undefined) {
+          if (!dto.teamId) {
+            throw new BadRequestException('Regu wajib dipilih.');
+          }
+
           const team = await tx.team.findFirst({
             where: {
               id: dto.teamId,
-              siteId: nextSiteId!,
+              siteId: nextSiteId,
               status: 'ACTIVE',
             },
             select: {
@@ -491,14 +508,29 @@ export class UsersService {
           }
 
           teamId = team.id;
-        } else if (nextSiteId !== existingUser.siteId) {
-          teamId = null;
+        } else if (teamId) {
+          const existingTeam = await tx.team.findFirst({
+            where: {
+              id: teamId,
+              siteId: nextSiteId,
+              status: 'ACTIVE',
+            },
+            select: {
+              id: true,
+            },
+          });
+
+          if (!existingTeam) {
+            throw new BadRequestException(
+              'Regu lama tidak sesuai dengan site baru. Silakan pilih regu yang valid.',
+            );
+          }
+
+          teamId = existingTeam.id;
         }
 
-        if (nextRole.name === 'SECURITY' && !teamId) {
-          throw new BadRequestException(
-            'User SECURITY wajib memiliki regu aktif.',
-          );
+        if (!teamId) {
+          throw new BadRequestException('User wajib memiliki regu aktif.');
         }
 
         const updatedUser = await tx.user.update({
@@ -509,33 +541,51 @@ export class UsersService {
             ...(dto.roleId !== undefined && {
               roleId: dto.roleId,
             }),
+
             ...(dto.siteId !== undefined && {
               siteId: dto.siteId,
             }),
+
             ...(dto.employeeNumber !== undefined && {
               employeeNumber: dto.employeeNumber?.trim() || null,
             }),
+
             ...(dto.fullName !== undefined && {
               fullName: dto.fullName.trim(),
             }),
+
             ...(dto.username !== undefined && {
               username: dto.username.trim(),
             }),
+
             ...(dto.email !== undefined && {
               email: dto.email?.trim().toLowerCase() || null,
             }),
+
             ...(dto.phone !== undefined && {
               phone: dto.phone,
             }),
+
             ...(dto.photoUrl !== undefined && {
               photoUrl: dto.photoUrl,
             }),
+
             ...(passwordHash && {
               passwordHash,
             }),
+
             teamId,
           },
-          select: userDetailSelect,
+          select: {
+            ...userDetailSelect,
+            role: {
+              select: {
+                id: true,
+                name: true,
+                description: true,
+              },
+            },
+          },
         });
 
         await this.auditLogService.createAudit(tx, {
@@ -543,6 +593,7 @@ export class UsersService {
           action: 'UPDATE_USER',
           entityType: 'USER',
           entityId: updatedUser.id,
+
           oldData: {
             fullName: existingUser.fullName,
             username: existingUser.username,
@@ -555,6 +606,7 @@ export class UsersService {
             teamId: existingUser.teamId,
             status: existingUser.status,
           },
+
           newData: {
             fullName: updatedUser.fullName,
             username: updatedUser.username,
