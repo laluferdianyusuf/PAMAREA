@@ -102,9 +102,6 @@ export class UsersService {
 
   async findAllUsers() {
     const users = await this.prisma.user.findMany({
-      where: {
-        deletedAt: null,
-      },
       select: {
         ...userListSelect,
         scheduleAssignments: {
