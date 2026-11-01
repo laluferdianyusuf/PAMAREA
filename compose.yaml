@@ -33,6 +33,7 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-key.json
     volumes:
       - ./firebase-key.json:/run/secrets/firebase-key.json:ro
+      - ./uploads:/app/uploads
     ports:
       - "127.0.0.1:2026:2026"
     depends_on:
