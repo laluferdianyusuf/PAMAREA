@@ -474,7 +474,6 @@ model PatrolPoint {
   updatedAt                      DateTime                        @updatedAt @map("updated_at")
   patrolScheduleAssignmentPoints PatrolScheduleAssignmentPoint[]
 
-  @@unique([siteId, code])
   @@index([siteId])
   @@index([status])
   @@map("patrol_points")
