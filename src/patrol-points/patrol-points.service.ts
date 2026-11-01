@@ -75,7 +75,6 @@ export class PatrolPointsService {
   async findAll(siteId?: string) {
     return this.prisma.patrolPoint.findMany({
       where: {
-        deletedAt: null,
         ...(siteId ? { siteId } : {}),
       },
 
@@ -127,7 +126,6 @@ export class PatrolPointsService {
     return this.prisma.patrolPoint.findMany({
       where: {
         status: 'ACTIVE',
-        deletedAt: null,
 
         ...(siteId
           ? {
@@ -184,7 +182,6 @@ export class PatrolPointsService {
     const patrolPoint = await this.prisma.patrolPoint.findFirst({
       where: {
         id,
-        deletedAt: null,
       },
 
       include: {
@@ -231,7 +228,6 @@ export class PatrolPointsService {
     const existing = await this.prisma.patrolPoint.findFirst({
       where: {
         id,
-        deletedAt: null,
       },
     });
 
@@ -244,7 +240,7 @@ export class PatrolPointsService {
         where: {
           siteId: existing.siteId,
           code: dto.code,
-          deletedAt: null,
+
           NOT: {
             id,
           },
@@ -303,7 +299,6 @@ export class PatrolPointsService {
     const existing = await this.prisma.patrolPoint.findFirst({
       where: {
         id,
-        deletedAt: null,
       },
     });
 
@@ -326,7 +321,6 @@ export class PatrolPointsService {
     const existing = await this.prisma.patrolPoint.findFirst({
       where: {
         id,
-        deletedAt: null,
       },
     });
 
@@ -349,7 +343,6 @@ export class PatrolPointsService {
     const existing = await this.prisma.patrolPoint.findFirst({
       where: {
         id,
-        deletedAt: null,
       },
     });
 
