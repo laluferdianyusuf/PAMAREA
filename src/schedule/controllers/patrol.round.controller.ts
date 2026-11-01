@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import type { User } from '../../generated/prisma/client.js';
 import { RoleName } from '../../generated/prisma/enums.js';
+import { GetGroupedRoundsQueryDto } from '../dto/get-grouped-rounds-query.dto.js';
 import { ReorderRoundCheckpointsDto } from '../dto/reorder.round.checkpoints.dto.js';
 import { PatrolRoundService } from '../services/patrol.round.service.js';
 
@@ -50,8 +51,8 @@ export class PatrolRoundController {
   }
 
   @Get('all/grouped-by-user')
-  getAllRoundsGroupedByUser() {
-    return this.service.getAllRoundsGroupedByUser();
+  getAllRoundsGroupedByUser(@Query() query: GetGroupedRoundsQueryDto) {
+    return this.service.getAllRoundsGroupedByUser(query);
   }
 
   @Get('users/:userId/rounds')

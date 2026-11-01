@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 import { AuditLogService } from '../../audit/audit.service.js';
 import {
   PatrolPointStatus,
@@ -23,6 +24,10 @@ import { PatrolScheduleRepository } from '../repositories/patrol-schedule.reposi
 import { ScheduleGenerationService } from './schedule.generation.service.js';
 
 type Tx = Prisma.TransactionClient;
+
+function isValidUuid(value: string): boolean {
+  return isUUID(value);
+}
 
 @Injectable()
 export class PatrolScheduleService {
@@ -395,16 +400,366 @@ export class PatrolScheduleService {
     };
   }
 
+  // async getMonthlyRoster(siteId: string, month: number, year: number) {
+  //   const startDate = new Date(Date.UTC(year, month - 1, 1));
+  //   const endDate = new Date(Date.UTC(year, month, 0));
+
+  //   const assignments = await this.prisma.patrolScheduleAssignment.findMany({
+  //     where: {
+  //       schedule: { siteId },
+  //       status: ScheduleAssignmentStatus.ACTIVE,
+  //       startDate: { lte: endDate },
+  //       OR: [{ endDate: null }, { endDate: { gte: startDate } }],
+  //     },
+  //     include: {
+  //       user: {
+  //         select: {
+  //           id: true,
+  //           fullName: true,
+  //           employeeNumber: true,
+  //         },
+  //       },
+  //       schedule: {
+  //         select: {
+  //           id: true,
+  //           name: true,
+  //           startTime: true,
+  //           endTime: true,
+  //         },
+  //       },
+  //     },
+  //     orderBy: [{ user: { fullName: 'asc' } }, { startDate: 'asc' }],
+  //   });
+
+  //   const rosterMap = new Map<string, any>();
+
+  //   for (const assign of assignments) {
+  //     const userId = assign.user.id;
+
+  //     if (!rosterMap.has(userId)) {
+  //       rosterMap.set(userId, {
+  //         userId,
+  //         employeeNumber: assign.user.employeeNumber,
+  //         fullName: assign.user.fullName,
+  //         shifts: {},
+  //         shiftDetails: {},
+  //       });
+  //     }
+
+  //     const userData = rosterMap.get(userId);
+  //     const scheduleName = assign.schedule.name.toLowerCase();
+
+  //     let shiftCode: string;
+
+  //     if (scheduleName.includes('pagi')) {
+  //       shiftCode = 'P';
+  //     } else if (
+  //       scheduleName.includes('siang') ||
+  //       scheduleName.includes('sore')
+  //     ) {
+  //       shiftCode = 'S';
+  //     } else if (
+  //       scheduleName.includes('malam') ||
+  //       scheduleName.includes('overnight')
+  //     ) {
+  //       shiftCode = 'M';
+  //     } else {
+  //       shiftCode = '-';
+  //     }
+
+  //     const assignStart =
+  //       assign.startDate > startDate ? assign.startDate : startDate;
+
+  //     const assignEnd =
+  //       assign.endDate && assign.endDate < endDate ? assign.endDate : endDate;
+
+  //     const cursor = new Date(
+  //       Date.UTC(
+  //         assignStart.getUTCFullYear(),
+  //         assignStart.getUTCMonth(),
+  //         assignStart.getUTCDate(),
+  //       ),
+  //     );
+
+  //     const lastDate = Date.UTC(
+  //       assignEnd.getUTCFullYear(),
+  //       assignEnd.getUTCMonth(),
+  //       assignEnd.getUTCDate(),
+  //     );
+
+  //     while (cursor.getTime() <= lastDate) {
+  //       const dateString = cursor.toISOString().slice(0, 10);
+
+  //       if (userData.shifts[dateString]) {
+  //         console.warn(
+  //           `[Roster] Assignment ganda: ${assign.user.fullName}, ` +
+  //             `${dateString}, shift sebelumnya=${userData.shifts[dateString]}, ` +
+  //             `shift baru=${shiftCode}, jadwal=${assign.schedule.name}`,
+  //         );
+  //       } else {
+  //         userData.shifts[dateString] = shiftCode;
+  //       }
+
+  //       cursor.setUTCDate(cursor.getUTCDate() + 1);
+  //     }
+  //   }
+
+  //   const absences = await this.prisma.securityAbsence.findMany({
+  //     where: {
+  //       siteId,
+  //       status: 'ACTIVE',
+  //       startDate: {
+  //         lte: endDate,
+  //       },
+  //       endDate: {
+  //         gte: startDate,
+  //       },
+  //     },
+  //     include: {
+  //       user: {
+  //         select: {
+  //           id: true,
+  //           fullName: true,
+  //           employeeNumber: true,
+  //         },
+  //       },
+  //       replacements: {
+  //         where: {
+  //           status: 'ACTIVE',
+  //         },
+  //         include: {
+  //           replacementUser: {
+  //             select: {
+  //               id: true,
+  //               fullName: true,
+  //               employeeNumber: true,
+  //             },
+  //           },
+  //           originalAssignment: {
+  //             include: {
+  //               schedule: {
+  //                 select: {
+  //                   name: true,
+  //                   startTime: true,
+  //                   endTime: true,
+  //                 },
+  //               },
+  //             },
+  //           },
+  //         },
+  //       },
+  //     },
+  //   });
+
+  //   for (const absence of absences) {
+  //     const originalUserId = absence.user.id;
+
+  //     if (!rosterMap.has(originalUserId)) {
+  //       rosterMap.set(originalUserId, {
+  //         userId: originalUserId,
+  //         employeeNumber: absence.user.employeeNumber,
+  //         fullName: absence.user.fullName,
+  //         shifts: {},
+  //         shiftDetails: {},
+  //       });
+  //     }
+
+  //     const originalUserData = rosterMap.get(originalUserId);
+
+  //     const absenceStart =
+  //       absence.startDate > startDate ? absence.startDate : startDate;
+
+  //     const absenceEnd = absence.endDate < endDate ? absence.endDate : endDate;
+
+  //     const cursor = new Date(
+  //       Date.UTC(
+  //         absenceStart.getUTCFullYear(),
+  //         absenceStart.getUTCMonth(),
+  //         absenceStart.getUTCDate(),
+  //       ),
+  //     );
+
+  //     const lastDate = Date.UTC(
+  //       absenceEnd.getUTCFullYear(),
+  //       absenceEnd.getUTCMonth(),
+  //       absenceEnd.getUTCDate(),
+  //     );
+
+  //     while (cursor.getTime() <= lastDate) {
+  //       const dateString = cursor.toISOString().slice(0, 10);
+
+  //       // C = Cuti/ketidakhadiran.
+  //       // Jenis detail sebenarnya disimpan di shiftDetails.
+  //       originalUserData.shifts[dateString] = 'C';
+
+  //       originalUserData.shiftDetails[dateString] = {
+  //         type: absence.type,
+  //         status: 'ABSENT',
+  //         reason: absence.reason,
+  //       };
+
+  //       cursor.setUTCDate(cursor.getUTCDate() + 1);
+  //     }
+
+  //     for (const replacement of absence.replacements) {
+  //       const replacementUser = replacement.replacementUser;
+  //       const replacementUserId = replacementUser.id;
+
+  //       if (!rosterMap.has(replacementUserId)) {
+  //         rosterMap.set(replacementUserId, {
+  //           userId: replacementUserId,
+  //           employeeNumber: replacementUser.employeeNumber,
+  //           fullName: replacementUser.fullName,
+  //           shifts: {},
+  //           shiftDetails: {},
+  //         });
+  //       }
+
+  //       const replacementUserData = rosterMap.get(replacementUserId);
+
+  //       const replacementStart =
+  //         replacement.startDate > startDate ? replacement.startDate : startDate;
+
+  //       const replacementEnd =
+  //         replacement.endDate < endDate ? replacement.endDate : endDate;
+
+  //       const replacementCursor = new Date(
+  //         Date.UTC(
+  //           replacementStart.getUTCFullYear(),
+  //           replacementStart.getUTCMonth(),
+  //           replacementStart.getUTCDate(),
+  //         ),
+  //       );
+
+  //       const replacementLastDate = Date.UTC(
+  //         replacementEnd.getUTCFullYear(),
+  //         replacementEnd.getUTCMonth(),
+  //         replacementEnd.getUTCDate(),
+  //       );
+
+  //       while (replacementCursor.getTime() <= replacementLastDate) {
+  //         const dateString = replacementCursor.toISOString().slice(0, 10);
+
+  //         replacementUserData.shiftDetails[dateString] = {
+  //           type: 'REPLACEMENT',
+  //           status: 'REPLACEMENT',
+  //           replacedUser: {
+  //             id: absence.user.id,
+  //             fullName: absence.user.fullName,
+  //           },
+  //           absenceType: absence.type,
+  //           schedule: replacement.originalAssignment.schedule,
+  //         };
+
+  //         replacementCursor.setUTCDate(replacementCursor.getUTCDate() + 1);
+  //       }
+  //     }
+  //   }
+
+  //   return Array.from(rosterMap.values());
+  // }
+
   async getMonthlyRoster(siteId: string, month: number, year: number) {
     const startDate = new Date(Date.UTC(year, month - 1, 1));
     const endDate = new Date(Date.UTC(year, month, 0));
 
+    const normalizedSiteId = siteId?.trim();
+
+    const isAllSites =
+      !normalizedSiteId || normalizedSiteId.toLowerCase() === 'all';
+
+    if (!isAllSites && !isValidUuid(normalizedSiteId)) {
+      throw new BadRequestException('Site ID tidak valid');
+    }
+
+    const siteFilter = isAllSites ? {} : { siteId: normalizedSiteId };
+
+    const formatDate = (date: Date): string => date.toISOString().slice(0, 10);
+
+    const getDateRange = (
+      from: Date,
+      to: Date | null,
+    ): { start: Date; end: Date } => {
+      const start = from > startDate ? from : startDate;
+      const actualEnd = to ?? endDate;
+      const end = actualEnd < endDate ? actualEnd : endDate;
+
+      return {
+        start: new Date(
+          Date.UTC(
+            start.getUTCFullYear(),
+            start.getUTCMonth(),
+            start.getUTCDate(),
+          ),
+        ),
+        end: new Date(
+          Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate()),
+        ),
+      };
+    };
+
+    const getLegacyShiftCode = (name: string): string => {
+      const normalized = name.toLowerCase();
+
+      if (normalized.includes('pagi')) return 'P';
+
+      if (normalized.includes('siang') || normalized.includes('sore')) {
+        return 'S';
+      }
+
+      if (normalized.includes('malam') || normalized.includes('overnight')) {
+        return 'M';
+      }
+
+      return '-';
+    };
+
+    const rosterMap = new Map<string, any>();
+
+    const ensureRosterUser = (user: {
+      id: string;
+      fullName: string;
+      employeeNumber: string | null;
+    }) => {
+      if (!rosterMap.has(user.id)) {
+        rosterMap.set(user.id, {
+          userId: user.id,
+          employeeNumber: user.employeeNumber,
+          fullName: user.fullName,
+          shifts: {},
+          shiftDetails: {},
+          dates: {},
+        });
+      }
+
+      return rosterMap.get(user.id);
+    };
+
+    const addDateEntry = (userData: any, dateString: string, entry: any) => {
+      if (!userData.dates[dateString]) {
+        userData.dates[dateString] = [];
+      }
+
+      userData.dates[dateString].push(entry);
+    };
+
     const assignments = await this.prisma.patrolScheduleAssignment.findMany({
       where: {
-        schedule: { siteId },
+        schedule: siteFilter,
         status: ScheduleAssignmentStatus.ACTIVE,
-        startDate: { lte: endDate },
-        OR: [{ endDate: null }, { endDate: { gte: startDate } }],
+        startDate: {
+          lte: endDate,
+        },
+        OR: [
+          {
+            endDate: null,
+          },
+          {
+            endDate: {
+              gte: startDate,
+            },
+          },
+        ],
       },
       include: {
         user: {
@@ -420,79 +775,50 @@ export class PatrolScheduleService {
             name: true,
             startTime: true,
             endTime: true,
+            siteId: true,
           },
         },
       },
-      orderBy: [{ user: { fullName: 'asc' } }, { startDate: 'asc' }],
+      orderBy: [
+        {
+          user: {
+            fullName: 'asc',
+          },
+        },
+        {
+          startDate: 'asc',
+        },
+      ],
     });
 
-    const rosterMap = new Map<string, any>();
+    for (const assignment of assignments) {
+      const userData = ensureRosterUser(assignment.user);
 
-    for (const assign of assignments) {
-      const userId = assign.user.id;
+      const range = getDateRange(assignment.startDate, assignment.endDate);
 
-      if (!rosterMap.has(userId)) {
-        rosterMap.set(userId, {
-          userId,
-          employeeNumber: assign.user.employeeNumber,
-          fullName: assign.user.fullName,
-          shifts: {},
-          shiftDetails: {},
-        });
-      }
-
-      const userData = rosterMap.get(userId);
-      const scheduleName = assign.schedule.name.toLowerCase();
-
-      let shiftCode: string;
-
-      if (scheduleName.includes('pagi')) {
-        shiftCode = 'P';
-      } else if (
-        scheduleName.includes('siang') ||
-        scheduleName.includes('sore')
-      ) {
-        shiftCode = 'S';
-      } else if (
-        scheduleName.includes('malam') ||
-        scheduleName.includes('overnight')
-      ) {
-        shiftCode = 'M';
-      } else {
-        shiftCode = '-';
-      }
-
-      const assignStart =
-        assign.startDate > startDate ? assign.startDate : startDate;
-
-      const assignEnd =
-        assign.endDate && assign.endDate < endDate ? assign.endDate : endDate;
-
-      const cursor = new Date(
-        Date.UTC(
-          assignStart.getUTCFullYear(),
-          assignStart.getUTCMonth(),
-          assignStart.getUTCDate(),
-        ),
-      );
-
-      const lastDate = Date.UTC(
-        assignEnd.getUTCFullYear(),
-        assignEnd.getUTCMonth(),
-        assignEnd.getUTCDate(),
-      );
+      const cursor = range.start;
+      const lastDate = range.end.getTime();
 
       while (cursor.getTime() <= lastDate) {
-        const dateString = cursor.toISOString().slice(0, 10);
+        const dateString = formatDate(cursor);
 
-        if (userData.shifts[dateString]) {
-          console.warn(
-            `[Roster] Assignment ganda: ${assign.user.fullName}, ` +
-              `${dateString}, shift sebelumnya=${userData.shifts[dateString]}, ` +
-              `shift baru=${shiftCode}, jadwal=${assign.schedule.name}`,
+        addDateEntry(userData, dateString, {
+          assignmentId: assignment.id,
+          scheduleId: assignment.schedule.id,
+          scheduleName: assignment.schedule.name,
+          startTime: assignment.schedule.startTime,
+          endTime: assignment.schedule.endTime,
+          siteId: assignment.schedule.siteId,
+          startDate: formatDate(assignment.startDate),
+          endDate: assignment.endDate ? formatDate(assignment.endDate) : null,
+          type: 'ASSIGNMENT',
+          status: 'ACTIVE',
+        });
+
+        if (!userData.shifts[dateString]) {
+          userData.shifts[dateString] = getLegacyShiftCode(
+            assignment.schedule.name,
           );
-        } else {
-          userData.shifts[dateString] = shiftCode;
         }
 
         cursor.setUTCDate(cursor.getUTCDate() + 1);
@@ -501,7 +827,7 @@ export class PatrolScheduleService {
 
     const absences = await this.prisma.securityAbsence.findMany({
       where: {
-        siteId,
+        ...siteFilter,
         status: 'ACTIVE',
         startDate: {
           lte: endDate,
@@ -534,9 +860,11 @@ export class PatrolScheduleService {
               include: {
                 schedule: {
                   select: {
+                    id: true,
                     name: true,
                     startTime: true,
                     endTime: true,
+                    siteId: true,
                   },
                 },
               },
@@ -547,44 +875,26 @@ export class PatrolScheduleService {
     });
 
     for (const absence of absences) {
-      const originalUserId = absence.user.id;
+      const originalUserData = ensureRosterUser(absence.user);
 
-      if (!rosterMap.has(originalUserId)) {
-        rosterMap.set(originalUserId, {
-          userId: originalUserId,
-          employeeNumber: absence.user.employeeNumber,
-          fullName: absence.user.fullName,
-          shifts: {},
-          shiftDetails: {},
+      const absenceRange = getDateRange(absence.startDate, absence.endDate);
+
+      const absenceCursor = absenceRange.start;
+      const absenceLastDate = absenceRange.end.getTime();
+
+      while (absenceCursor.getTime() <= absenceLastDate) {
+        const dateString = formatDate(absenceCursor);
+
+        addDateEntry(originalUserData, dateString, {
+          absenceId: absence.id,
+          type: 'ABSENCE',
+          status: 'ABSENT',
+          absenceType: absence.type,
+          reason: absence.reason,
+          startDate: formatDate(absence.startDate),
+          endDate: formatDate(absence.endDate),
         });
-      }
 
-      const originalUserData = rosterMap.get(originalUserId);
-
-      const absenceStart =
-        absence.startDate > startDate ? absence.startDate : startDate;
-
-      const absenceEnd = absence.endDate < endDate ? absence.endDate : endDate;
-
-      const cursor = new Date(
-        Date.UTC(
-          absenceStart.getUTCFullYear(),
-          absenceStart.getUTCMonth(),
-          absenceStart.getUTCDate(),
-        ),
-      );
-
-      const lastDate = Date.UTC(
-        absenceEnd.getUTCFullYear(),
-        absenceEnd.getUTCMonth(),
-        absenceEnd.getUTCDate(),
-      );
-
-      while (cursor.getTime() <= lastDate) {
-        const dateString = cursor.toISOString().slice(0, 10);
-
-        // C = Cuti/ketidakhadiran.
-        // Jenis detail sebenarnya disimpan di shiftDetails.
         originalUserData.shifts[dateString] = 'C';
 
         originalUserData.shiftDetails[dateString] = {
@@ -593,47 +903,47 @@ export class PatrolScheduleService {
           reason: absence.reason,
         };
 
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
+        absenceCursor.setUTCDate(absenceCursor.getUTCDate() + 1);
       }
 
       for (const replacement of absence.replacements) {
         const replacementUser = replacement.replacementUser;
-        const replacementUserId = replacementUser.id;
 
-        if (!rosterMap.has(replacementUserId)) {
-          rosterMap.set(replacementUserId, {
-            userId: replacementUserId,
-            employeeNumber: replacementUser.employeeNumber,
-            fullName: replacementUser.fullName,
-            shifts: {},
-            shiftDetails: {},
-          });
-        }
+        const replacementUserData = ensureRosterUser(replacementUser);
 
-        const replacementUserData = rosterMap.get(replacementUserId);
-
-        const replacementStart =
-          replacement.startDate > startDate ? replacement.startDate : startDate;
-
-        const replacementEnd =
-          replacement.endDate < endDate ? replacement.endDate : endDate;
-
-        const replacementCursor = new Date(
-          Date.UTC(
-            replacementStart.getUTCFullYear(),
-            replacementStart.getUTCMonth(),
-            replacementStart.getUTCDate(),
-          ),
+        const replacementRange = getDateRange(
+          replacement.startDate,
+          replacement.endDate,
         );
 
-        const replacementLastDate = Date.UTC(
-          replacementEnd.getUTCFullYear(),
-          replacementEnd.getUTCMonth(),
-          replacementEnd.getUTCDate(),
-        );
+        const replacementCursor = replacementRange.start;
+        const replacementLastDate = replacementRange.end.getTime();
+
+        const schedule = replacement.originalAssignment.schedule;
 
         while (replacementCursor.getTime() <= replacementLastDate) {
-          const dateString = replacementCursor.toISOString().slice(0, 10);
+          const dateString = formatDate(replacementCursor);
+
+          addDateEntry(replacementUserData, dateString, {
+            replacementId: replacement.id,
+            originalAssignmentId: replacement.originalAssignment.id,
+            scheduleId: schedule.id,
+            scheduleName: schedule.name,
+            startTime: schedule.startTime,
+            endTime: schedule.endTime,
+            siteId: schedule.siteId,
+            type: 'REPLACEMENT',
+            status: 'REPLACEMENT',
+            replacedUser: {
+              id: absence.user.id,
+              fullName: absence.user.fullName,
+              employeeNumber: absence.user.employeeNumber,
+            },
+            absenceId: absence.id,
+            absenceType: absence.type,
+            startDate: formatDate(replacement.startDate),
+            endDate: formatDate(replacement.endDate),
+          });
 
           replacementUserData.shiftDetails[dateString] = {
             type: 'REPLACEMENT',
@@ -643,11 +953,24 @@ export class PatrolScheduleService {
               fullName: absence.user.fullName,
             },
             absenceType: absence.type,
-            schedule: replacement.originalAssignment.schedule,
+            schedule: {
+              id: schedule.id,
+              name: schedule.name,
+              startTime: schedule.startTime,
+              endTime: schedule.endTime,
+            },
           };
 
           replacementCursor.setUTCDate(replacementCursor.getUTCDate() + 1);
         }
+      }
+    }
+
+    for (const userData of rosterMap.values()) {
+      for (const dateString of Object.keys(userData.dates)) {
+        userData.dates[dateString].sort((a: any, b: any) => {
+          return (a.startTime ?? '').localeCompare(b.startTime ?? '');
+        });
       }
     }
 

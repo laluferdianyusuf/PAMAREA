@@ -11,6 +11,51 @@ export class EmergencyService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private getBroadcastStatus(
+    successCount: number,
+    failureCount: number,
+  ): 'SUCCESS' | 'PARTIAL_SUCCESS' | 'FAILED' {
+    if (failureCount === 0) return 'SUCCESS';
+    if (successCount > 0) return 'PARTIAL_SUCCESS';
+    return 'FAILED';
+  }
+
+  private isInvalidFcmToken(errorCode?: string): boolean {
+    return (
+      errorCode === 'messaging/registration-token-not-registered' ||
+      errorCode === 'messaging/invalid-registration-token'
+    );
+  }
+
+  private async deactivateInvalidTokens(tokens: string[]) {
+    const uniqueTokens = [...new Set(tokens)];
+
+    if (uniqueTokens.length === 0) return;
+
+    try {
+      const result = await this.prisma.userDevice.updateMany({
+        where: {
+          deviceIdentifier: {
+            in: uniqueTokens,
+          },
+          status: 'ACTIVE',
+        },
+        data: {
+          status: 'INACTIVE',
+        },
+      });
+
+      console.log('[FCM] Invalid tokens cleaned:', {
+        invalidTokenCount: uniqueTokens.length,
+        deactivatedDevices: result.count,
+      });
+    } catch (error) {
+      console.error('[FCM] Gagal membersihkan invalid tokens:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
   async broadcastEmergency(
     senderId: string,
     siteId: string,
@@ -22,7 +67,11 @@ export class EmergencyService {
   ) {
     const sender = await this.prisma.user.findUnique({
       where: { id: senderId },
-      select: { id: true, fullName: true, siteId: true },
+      select: {
+        id: true,
+        fullName: true,
+        siteId: true,
+      },
     });
 
     if (!sender) {
@@ -40,7 +89,10 @@ export class EmergencyService {
       include: {
         devices: {
           where: { status: 'ACTIVE' },
-          select: { deviceIdentifier: true },
+          select: {
+            id: true,
+            deviceIdentifier: true,
+          },
         },
       },
     });
@@ -70,6 +122,9 @@ export class EmergencyService {
       return {
         status: 'NO_ACTIVE_GUARDS',
         message: 'Tidak ada perangkat satpam aktif di site ini saat ini.',
+        totalDevices: 0,
+        successCount: 0,
+        failureCount: 0,
       };
     }
 
@@ -80,13 +135,18 @@ export class EmergencyService {
         locationData,
       );
 
+      const status = this.getBroadcastStatus(
+        result.successCount,
+        result.failureCount,
+      );
+
       await this.writeAuditLog({
         userId: senderId,
         action: 'BROADCAST_EMERGENCY',
         entityType: 'EMERGENCY_ALERT',
         newData: {
           siteId,
-          status: 'SUCCESS',
+          status,
           totalDevices: fcmTokens.length,
           successCount: result.successCount,
           failureCount: result.failureCount,
@@ -98,7 +158,7 @@ export class EmergencyService {
       });
 
       return {
-        status: 'SUCCESS',
+        status,
         message: `Peringatan darurat diproses untuk ${fcmTokens.length} perangkat.`,
         totalDevices: fcmTokens.length,
         successCount: result.successCount,
@@ -138,7 +198,9 @@ export class EmergencyService {
   ) {
     const sender = await this.prisma.user.findUnique({
       where: { id: senderId },
-      select: { fullName: true },
+      select: {
+        fullName: true,
+      },
     });
 
     if (!sender) {
@@ -156,7 +218,9 @@ export class EmergencyService {
       select: {
         devices: {
           where: { status: 'ACTIVE' },
-          select: { deviceIdentifier: true },
+          select: {
+            deviceIdentifier: true,
+          },
         },
       },
     });
@@ -230,6 +294,8 @@ export class EmergencyService {
     let successCount = 0;
     let failureCount = 0;
 
+    const invalidTokens: string[] = [];
+
     try {
       for (let i = 0; i < tokens.length; i += 500) {
         const batch = tokens.slice(i, i + 500);
@@ -242,15 +308,32 @@ export class EmergencyService {
         successCount += response.successCount;
         failureCount += response.failureCount;
 
+        console.log('[PATROL WARNING] Batch result:', {
+          batchSize: batch.length,
+          successCount: response.successCount,
+          failureCount: response.failureCount,
+        });
+
         response.responses.forEach((result, index) => {
           if (!result.success) {
+            const errorCode = result.error?.code;
+
             console.error('[PATROL WARNING] FCM gagal:', {
               tokenIndex: i + index,
+              errorCode,
               error: result.error?.message,
             });
+
+            if (this.isInvalidFcmToken(errorCode)) {
+              invalidTokens.push(batch[index]);
+            }
           }
         });
       }
+
+      await this.deactivateInvalidTokens(invalidTokens);
+
+      const status = this.getBroadcastStatus(successCount, failureCount);
 
       await this.writeAuditLog({
         userId: senderId,
@@ -264,13 +347,13 @@ export class EmergencyService {
           totalDevices: tokens.length,
           successCount,
           failureCount,
-          status: 'SUCCESS',
+          status,
           timestamp: new Date().toISOString(),
         },
       });
 
       return {
-        status: 'SUCCESS',
+        status,
         totalDevices: tokens.length,
         successCount,
         failureCount,
@@ -308,21 +391,12 @@ export class EmergencyService {
     },
   ) {
     const preparedAt = new Date().toISOString();
+    const invalidTokens: string[] = [];
 
-    const payload: MulticastMessage = {
-      tokens: [],
-      notification: {
-        title: 'DARURAT SOS PAMAREA',
-        body: `${senderName} mengirim peringatan darurat. Segera periksa.`,
-      },
+    const payload: Omit<MulticastMessage, 'tokens'> = {
       android: {
         priority: 'high',
         ttl: 60 * 1000,
-        notification: {
-          channelId: 'emergency_channel_v2',
-          priority: 'max',
-          visibility: 'public',
-        },
       },
       data: {
         type: 'EMERGENCY_ALERT',
@@ -362,14 +436,22 @@ export class EmergencyService {
 
       response.responses.forEach((result, index) => {
         if (!result.success) {
+          const errorCode = result.error?.code;
+
           console.error('[SOS BACKEND] FCM gagal:', {
             tokenIndex: i + index,
-            errorCode: result.error?.code,
+            errorCode,
             error: result.error?.message,
           });
+
+          if (this.isInvalidFcmToken(errorCode)) {
+            invalidTokens.push(batch[index]);
+          }
         }
       });
     }
+
+    await this.deactivateInvalidTokens(invalidTokens);
 
     console.log('[SOS BACKEND] FCM result:', {
       preparedAt,

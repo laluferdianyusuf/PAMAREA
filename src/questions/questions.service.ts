@@ -192,7 +192,7 @@ export class QuestionsService {
       include: this.questionInclude(),
 
       orderBy: {
-        createdAt: 'desc',
+        createdAt: 'asc',
       },
     });
   }

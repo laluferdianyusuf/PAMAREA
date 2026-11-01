@@ -7,11 +7,13 @@ import {
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AuditLogService } from '../../audit/audit.service.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import {
   PatrolCheckpointStatus,
   PatrolRoundStatus,
 } from '../../generated/prisma/enums.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
+import { GetGroupedRoundsQueryDto } from '../dto/get-grouped-rounds-query.dto.js';
 import { ReorderRoundCheckpointsDto } from '../dto/reorder.round.checkpoints.dto.js';
 
 @Injectable()
@@ -342,8 +344,113 @@ export class PatrolRoundService {
     };
   }
 
-  async getAllRoundsGroupedByUser() {
+  async getAllRoundsGroupedByUser(query: GetGroupedRoundsQueryDto) {
+    const { date, siteId, scheduleId, search } = query;
+
+    let dateFilter:
+      | {
+          gte: Date;
+          lt: Date;
+        }
+      | undefined;
+
+    if (date) {
+      const [year, month, day] = date.split('-').map(Number);
+
+      const startDate = new Date(Date.UTC(year, month - 1, day, -7, 0, 0, 0));
+
+      const endDate = new Date(startDate);
+      endDate.setUTCDate(endDate.getUTCDate() + 1);
+
+      dateFilter = {
+        gte: startDate,
+        lt: endDate,
+      };
+    }
+
+    if (date) {
+      const [year, month, day] = date.split('-').map(Number);
+
+      const startDate = new Date(Date.UTC(year, month - 1, day, -7, 0, 0, 0));
+
+      const endDate = new Date(startDate);
+      endDate.setUTCDate(endDate.getUTCDate() + 1);
+
+      dateFilter = {
+        gte: startDate,
+        lt: endDate,
+      };
+    }
+
+    const searchValue = search?.trim();
+
+    const where: Prisma.PatrolRoundWhereInput = {
+      ...(dateFilter && {
+        scheduleDate: {
+          is: {
+            date: {
+              gte: dateFilter.gte,
+              lt: dateFilter.lt,
+            },
+          },
+        },
+      }),
+
+      ...((siteId || scheduleId || searchValue) && {
+        assignment: {
+          is: {
+            ...((siteId || scheduleId) && {
+              schedule: {
+                is: {
+                  ...(scheduleId && {
+                    id: scheduleId,
+                  }),
+
+                  ...(siteId && {
+                    site: {
+                      is: {
+                        id: siteId,
+                      },
+                    },
+                  }),
+                },
+              },
+            }),
+
+            ...(searchValue && {
+              user: {
+                is: {
+                  OR: [
+                    {
+                      fullName: {
+                        contains: searchValue,
+                        mode: 'insensitive',
+                      },
+                    },
+                    {
+                      employeeNumber: {
+                        contains: searchValue,
+                        mode: 'insensitive',
+                      },
+                    },
+                    {
+                      username: {
+                        contains: searchValue,
+                        mode: 'insensitive',
+                      },
+                    },
+                  ],
+                },
+              },
+            }),
+          },
+        },
+      }),
+    };
+
     const rounds = await this.prisma.patrolRound.findMany({
+      where,
+
       select: {
         id: true,
         roundNumber: true,
@@ -361,12 +468,20 @@ export class PatrolRoundService {
                 employeeNumber: true,
                 fullName: true,
                 username: true,
+
+                team: {
+                  select: {
+                    name: true,
+                  },
+                },
               },
             },
+
             schedule: {
               select: {
                 id: true,
                 name: true,
+
                 site: {
                   select: {
                     id: true,
@@ -396,13 +511,21 @@ export class PatrolRoundService {
             pointNameSnapshot: true,
             visitedAt: true,
           },
+
           orderBy: {
             sequence: 'asc',
           },
         },
       },
 
-      orderBy: [{ scheduledStartAt: 'desc' }, { roundNumber: 'asc' }],
+      orderBy: [
+        {
+          scheduledStartAt: 'desc',
+        },
+        {
+          roundNumber: 'asc',
+        },
+      ],
     });
 
     type Round = (typeof rounds)[number];
@@ -431,10 +554,19 @@ export class PatrolRoundService {
     return {
       totalUsers: grouped.size,
       totalRounds: rounds.length,
+
       data: Array.from(grouped.values()).map(({ user, rounds }) => ({
-        user,
+        user: {
+          id: user.id,
+          employeeNumber: user.employeeNumber,
+          fullName: user.fullName,
+          username: user.username,
+          teamName: user.team?.name ?? '-',
+        },
+
         rounds: rounds.map(({ assignment, ...round }) => ({
           ...round,
+
           schedule: assignment.schedule,
         })),
       })),

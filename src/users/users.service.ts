@@ -125,7 +125,6 @@ export class UsersService {
     const users = await this.prisma.user.findMany({
       where: {
         status: UserStatus.ACTIVE,
-        deletedAt: null,
       },
       select: userListSelect,
       orderBy: {
@@ -143,7 +142,6 @@ export class UsersService {
     const user = await this.prisma.user.findFirst({
       where: {
         id,
-        deletedAt: null,
       },
       select: userDetailSelect,
     });
@@ -690,6 +688,70 @@ export class UsersService {
       };
     } catch {
       throw new InternalServerErrorException('Gagal memperbarui foto user');
+    }
+  }
+
+  async changeUserPassword(id: string, newPassword: string, actorId: string) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        fullName: true,
+        username: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User tidak ditemukan.');
+    }
+
+    if (!newPassword || newPassword.trim().length < 8) {
+      throw new BadRequestException('Password baru minimal 8 karakter.');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.user.update({
+          where: {
+            id,
+          },
+          data: {
+            passwordHash,
+          },
+        });
+
+        await this.auditLogService.createAudit(tx, {
+          userId: actorId,
+          action: 'CHANGE_USER_PASSWORD',
+          entityType: 'USER',
+          entityId: id,
+          oldData: {
+            passwordChanged: false,
+          },
+          newData: {
+            passwordChanged: true,
+            changedBy: actorId,
+          },
+        });
+      });
+
+      return {
+        message: 'Password user berhasil diubah.',
+      };
+    } catch (error) {
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException
+      ) {
+        throw error;
+      }
+
+      throw new InternalServerErrorException('Gagal mengubah password user.');
     }
   }
 

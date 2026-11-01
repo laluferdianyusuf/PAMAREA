@@ -21,6 +21,11 @@ import { QuerySecurityAbsenceDto } from './dto/query-security-absence.dto.js';
 
 type Tx = Prisma.TransactionClient;
 
+type RoundReference = {
+  scheduleDateId: string;
+  roundNumber: number;
+};
+
 @Injectable()
 export class SecurityAbsenceService {
   constructor(
@@ -47,6 +52,7 @@ export class SecurityAbsenceService {
     secondEnd: Date | null,
   ) {
     const firstEndValue = firstEnd ?? new Date('9999-12-31T00:00:00.000Z');
+
     const secondEndValue = secondEnd ?? new Date('9999-12-31T00:00:00.000Z');
 
     return firstStart <= secondEndValue && secondStart <= firstEndValue;
@@ -74,7 +80,6 @@ export class SecurityAbsenceService {
     if (aEnd <= aStart) aEnd += 1440;
     if (bEnd <= bStart) bEnd += 1440;
 
-    // Memeriksa kemungkinan jadwal melewati tengah malam.
     for (const offset of [-1440, 0, 1440]) {
       const shiftedStart = bStart + offset;
       const shiftedEnd = bEnd + offset;
@@ -132,6 +137,27 @@ export class SecurityAbsenceService {
     startDate: Date,
     endDate: Date,
   ) {
+    const overlappingAbsence = await tx.securityAbsence.findFirst({
+      where: {
+        userId: replacementUserId,
+        status: AbsenceStatus.ACTIVE,
+        startDate: {
+          lte: endDate,
+        },
+        endDate: {
+          gte: startDate,
+        },
+      },
+    });
+
+    if (overlappingAbsence) {
+      throw new ConflictException({
+        message: 'Petugas pengganti sedang memiliki ketidakhadiran aktif',
+        replacementUserId,
+        absenceId: overlappingAbsence.id,
+      });
+    }
+
     const existingAssignments = await tx.patrolScheduleAssignment.findMany({
       where: {
         userId: replacementUserId,
@@ -142,7 +168,16 @@ export class SecurityAbsenceService {
         startDate: {
           lte: endDate,
         },
-        OR: [{ endDate: null }, { endDate: { gte: startDate } }],
+        OR: [
+          {
+            endDate: null,
+          },
+          {
+            endDate: {
+              gte: startDate,
+            },
+          },
+        ],
       },
       include: {
         schedule: {
@@ -165,20 +200,21 @@ export class SecurityAbsenceService {
         continue;
       }
 
-      if (
-        this.isDateOverlap(
-          assignment.startDate,
-          assignment.endDate,
-          startDate,
-          endDate,
-        ) &&
-        this.timeRangesOverlap(
-          originalAssignment.schedule.startTime,
-          originalAssignment.schedule.endTime,
-          assignment.schedule.startTime,
-          assignment.schedule.endTime,
-        )
-      ) {
+      const dateOverlap = this.isDateOverlap(
+        assignment.startDate,
+        assignment.endDate,
+        startDate,
+        endDate,
+      );
+
+      const timeOverlap = this.timeRangesOverlap(
+        originalAssignment.schedule.startTime,
+        originalAssignment.schedule.endTime,
+        assignment.schedule.startTime,
+        assignment.schedule.endTime,
+      );
+
+      if (dateOverlap && timeOverlap) {
         throw new ConflictException({
           message: 'Petugas pengganti memiliki jadwal yang bentrok',
           replacementUserId,
@@ -188,14 +224,24 @@ export class SecurityAbsenceService {
       }
     }
 
-    // Cek juga assignment lain pada schedule yang sama.
     const sameScheduleAssignment = await tx.patrolScheduleAssignment.findFirst({
       where: {
         scheduleId: originalAssignment.scheduleId,
         userId: replacementUserId,
         status: ScheduleAssignmentStatus.ACTIVE,
-        startDate: { lte: endDate },
-        OR: [{ endDate: null }, { endDate: { gte: startDate } }],
+        startDate: {
+          lte: endDate,
+        },
+        OR: [
+          {
+            endDate: null,
+          },
+          {
+            endDate: {
+              gte: startDate,
+            },
+          },
+        ],
       },
     });
 
@@ -206,13 +252,24 @@ export class SecurityAbsenceService {
     }
   }
 
+  private buildRoundCollisionCondition(
+    rounds: RoundReference[],
+  ): Prisma.PatrolRoundWhereInput {
+    return {
+      OR: rounds.map((round) => ({
+        scheduleDateId: round.scheduleDateId,
+        roundNumber: round.roundNumber,
+      })),
+    };
+  }
+
   async create(dto: CreateSecurityAbsenceDto, createdById: string) {
     const startDate = this.parseDate(dto.startDate);
     const endDate = this.parseDate(dto.endDate);
 
     this.validateDateRange(startDate, endDate);
 
-    if (dto.userId === dto.replacementUserId) {
+    if (dto.replacementUserId && dto.userId === dto.replacementUserId) {
       throw new BadRequestException(
         'Petugas pengganti tidak boleh sama dengan petugas yang cuti',
       );
@@ -225,7 +282,9 @@ export class SecurityAbsenceService {
             id: dto.userId,
             status: UserStatus.ACTIVE,
             deletedAt: null,
-            role: { name: RoleName.SECURITY },
+            role: {
+              name: RoleName.SECURITY,
+            },
           },
           select: {
             id: true,
@@ -246,13 +305,16 @@ export class SecurityAbsenceService {
           await this.validateSecurityUser(tx, dto.replacementUserId, siteId);
         }
 
-        // Cegah pencatatan ketidakhadiran aktif yang bertumpuk.
         const overlappingAbsence = await tx.securityAbsence.findFirst({
           where: {
             userId: dto.userId,
             status: AbsenceStatus.ACTIVE,
-            startDate: { lte: endDate },
-            endDate: { gte: startDate },
+            startDate: {
+              lte: endDate,
+            },
+            endDate: {
+              gte: startDate,
+            },
           },
         });
 
@@ -266,8 +328,19 @@ export class SecurityAbsenceService {
           where: {
             userId: dto.userId,
             status: ScheduleAssignmentStatus.ACTIVE,
-            startDate: { lte: endDate },
-            OR: [{ endDate: null }, { endDate: { gte: startDate } }],
+            startDate: {
+              lte: endDate,
+            },
+            OR: [
+              {
+                endDate: null,
+              },
+              {
+                endDate: {
+                  gte: startDate,
+                },
+              },
+            ],
             schedule: {
               siteId,
               status: {
@@ -355,38 +428,21 @@ export class SecurityAbsenceService {
               },
             });
 
-            const processedRound = originalRounds.find(
-              (round) => round.status !== 'PENDING',
+            const pendingRounds = originalRounds.filter(
+              (round) => round.status === 'PENDING',
             );
 
-            if (processedRound) {
-              throw new ConflictException({
-                message:
-                  'Penggantian ditolak karena sudah ada ronde yang berjalan atau selesai pada periode tersebut',
-                assignmentId: original.id,
-                roundId: processedRound.id,
-                roundStatus: processedRound.status,
-              });
-            }
-
-            // Hindari bentrok unique:
-            // scheduleDateId + assignmentId + roundNumber.
-            if (originalRounds.length > 0) {
+            if (pendingRounds.length > 0) {
               const collision = await tx.patrolRound.findFirst({
                 where: {
-                  assignmentId: {
-                    not: original.id,
-                  },
-                  scheduleDateId: {
-                    in: originalRounds.map((round) => round.scheduleDateId),
-                  },
-                  roundNumber: {
-                    in: originalRounds.map((round) => round.roundNumber),
-                  },
                   assignment: {
                     scheduleId: original.scheduleId,
                     userId: dto.replacementUserId,
                   },
+                  ...this.buildRoundCollisionCondition(pendingRounds),
+                },
+                select: {
+                  id: true,
                 },
               });
 
@@ -416,12 +472,11 @@ export class SecurityAbsenceService {
                 },
               });
 
-            // Pindahkan hanya ronde yang belum dimulai.
-            if (originalRounds.length > 0) {
+            if (pendingRounds.length > 0) {
               await tx.patrolRound.updateMany({
                 where: {
                   id: {
-                    in: originalRounds.map((round) => round.id),
+                    in: pendingRounds.map((round) => round.id),
                   },
                   status: 'PENDING',
                 },
@@ -498,12 +553,24 @@ export class SecurityAbsenceService {
 
     return this.prisma.securityAbsence.findMany({
       where: {
-        ...(query.siteId && { siteId: query.siteId }),
-        ...(query.userId && { userId: query.userId }),
+        ...(query.siteId && {
+          siteId: query.siteId,
+        }),
+        ...(query.userId && {
+          userId: query.userId,
+        }),
         ...(startDate || endDate
           ? {
-              startDate: endDate ? { lte: endDate } : undefined,
-              endDate: startDate ? { gte: startDate } : undefined,
+              startDate: endDate
+                ? {
+                    lte: endDate,
+                  }
+                : undefined,
+              endDate: startDate
+                ? {
+                    gte: startDate,
+                  }
+                : undefined,
             }
           : {}),
       },
@@ -553,13 +620,22 @@ export class SecurityAbsenceService {
           },
         },
       },
-      orderBy: [{ startDate: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [
+        {
+          startDate: 'desc',
+        },
+        {
+          createdAt: 'desc',
+        },
+      ],
     });
   }
 
   async findOne(id: string) {
     const absence = await this.prisma.securityAbsence.findUnique({
-      where: { id },
+      where: {
+        id,
+      },
       include: {
         user: {
           select: {
@@ -618,7 +694,9 @@ export class SecurityAbsenceService {
     return this.prisma.$transaction(
       async (tx) => {
         const absence = await tx.securityAbsence.findUnique({
-          where: { id },
+          where: {
+            id,
+          },
           include: {
             replacements: {
               where: {
@@ -641,6 +719,39 @@ export class SecurityAbsenceService {
         }
 
         for (const replacement of absence.replacements) {
+          const inProgressRound = await tx.patrolRound.findFirst({
+            where: {
+              assignmentId: replacement.replacementAssignmentId,
+              status: 'IN_PROGRESS',
+              scheduleDate: {
+                date: {
+                  gte: replacement.startDate,
+                  lte: replacement.endDate,
+                },
+              },
+            },
+            select: {
+              id: true,
+              roundNumber: true,
+              scheduleDate: {
+                select: {
+                  date: true,
+                },
+              },
+            },
+          });
+
+          if (inProgressRound) {
+            throw new ConflictException({
+              message:
+                'Replacement tidak dapat dibatalkan karena masih ada ronde yang sedang berjalan. Selesaikan atau batalkan patroli terlebih dahulu.',
+              replacementId: replacement.id,
+              roundId: inProgressRound.id,
+              roundNumber: inProgressRound.roundNumber,
+              date: inProgressRound.scheduleDate.date,
+            });
+          }
+
           const pendingRounds = await tx.patrolRound.findMany({
             where: {
               assignmentId: replacement.replacementAssignmentId,
@@ -663,12 +774,10 @@ export class SecurityAbsenceService {
             const collision = await tx.patrolRound.findFirst({
               where: {
                 assignmentId: replacement.originalAssignmentId,
-                scheduleDateId: {
-                  in: pendingRounds.map((round) => round.scheduleDateId),
-                },
-                roundNumber: {
-                  in: pendingRounds.map((round) => round.roundNumber),
-                },
+                ...this.buildRoundCollisionCondition(pendingRounds),
+              },
+              select: {
+                id: true,
               },
             });
 
@@ -692,7 +801,9 @@ export class SecurityAbsenceService {
           }
 
           await tx.scheduleReplacement.update({
-            where: { id: replacement.id },
+            where: {
+              id: replacement.id,
+            },
             data: {
               status: ReplacementStatus.CANCELLED,
             },
@@ -709,7 +820,9 @@ export class SecurityAbsenceService {
         }
 
         const updated = await tx.securityAbsence.update({
-          where: { id },
+          where: {
+            id,
+          },
           data: {
             status: AbsenceStatus.CANCELLED,
           },

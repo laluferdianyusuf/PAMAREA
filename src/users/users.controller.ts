@@ -18,6 +18,7 @@ import { RolesGuard } from '../common/guards/roles.guard.js';
 import type { User } from '../generated/prisma/client.js';
 import { RoleName } from '../generated/prisma/enums.js';
 import { CreateUserDto } from './dto/create-users.dto.js';
+import { ChangeUserPasswordDto } from './dto/hange-user-password.dto.js';
 import { UpdateUserDto } from './dto/update-users.dto.js';
 import { UsersService } from './users.service.js';
 
@@ -92,5 +93,16 @@ export class UsersController {
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: User) {
     return this.usersService.removeUser(id, user.id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Roles(RoleName.ADMIN)
+  @Patch(':id/change-password')
+  changeUserPassword(
+    @Param('id') id: string,
+    @Body() dto: ChangeUserPasswordDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.usersService.changeUserPassword(id, dto.newPassword, actorId);
   }
 }

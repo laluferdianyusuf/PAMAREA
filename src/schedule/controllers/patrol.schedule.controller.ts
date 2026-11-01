@@ -47,11 +47,6 @@ export class PatrolScheduleController {
     return this.service.create(dto, user.id);
   }
 
-  @Get()
-  findAll(@Query() query: ScheduleFilterDto) {
-    return this.service.findAll(query);
-  }
-
   /**
    * GET /patrol-schedules/roster?siteId=xxx&month=10&year=2026
    * Mengambil data roster bulanan untuk Dashboard Admin
@@ -63,6 +58,11 @@ export class PatrolScheduleController {
     @Query('year', ParseIntPipe) year: number,
   ) {
     return this.service.getMonthlyRoster(siteId, month, year);
+  }
+
+  @Get()
+  findAll(@Query() query: ScheduleFilterDto) {
+    return this.service.findAll(query);
   }
 
   @Get(':id')

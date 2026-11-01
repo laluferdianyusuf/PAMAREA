@@ -1269,6 +1269,9 @@ export class PatrolsService {
       where: {
         patrolPointId,
         isRequired: true,
+        question: {
+          status: 'ACTIVE',
+        },
       },
       include: {
         question: true,
@@ -1312,7 +1315,12 @@ export class PatrolsService {
     patrolPointId: string,
   ) {
     const pointQuestions = await this.prisma.pointQuestion.findMany({
-      where: { patrolPointId },
+      where: {
+        patrolPointId,
+        question: {
+          status: 'ACTIVE',
+        },
+      },
       include: {
         question: true,
       },

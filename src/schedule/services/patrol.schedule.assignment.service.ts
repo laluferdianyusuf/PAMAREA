@@ -333,6 +333,11 @@ export class PatrolScheduleAssignmentService {
             employeeNumber: true,
             fullName: true,
             username: true,
+            role: {
+              select: {
+                name: true,
+              },
+            },
           },
         },
       },
@@ -348,7 +353,19 @@ export class PatrolScheduleAssignmentService {
         status: ScheduleAssignmentStatus.ACTIVE,
       },
       include: {
-        user: true,
+        user: {
+          select: {
+            id: true,
+            employeeNumber: true,
+            fullName: true,
+            username: true,
+            role: {
+              select: {
+                name: true,
+              },
+            },
+          },
+        },
         schedule: {
           include: {
             site: true,
