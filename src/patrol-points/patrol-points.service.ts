@@ -30,6 +30,7 @@ export class PatrolPointsService {
       where: {
         siteId: dto.siteId,
         code: dto.code,
+        deletedAt: null,
       },
     });
 
