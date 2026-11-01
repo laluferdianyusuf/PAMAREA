@@ -83,7 +83,6 @@ export class EmergencyService {
     const targetGuards = await this.prisma.user.findMany({
       where: {
         siteId,
-        role: { name: 'SECURITY' },
         status: 'ACTIVE',
       },
       include: {
