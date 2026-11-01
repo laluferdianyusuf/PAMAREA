@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -372,5 +373,27 @@ export class PatrolPointsService {
 
       throw error;
     }
+  }
+
+  async restore(id: string) {
+    const existing = await this.prisma.patrolPoint.findUnique({
+      where: { id },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Patrol point tidak ditemukan');
+    }
+
+    if (!existing.deletedAt) {
+      throw new BadRequestException('Patrol point sudah aktif');
+    }
+
+    return this.prisma.patrolPoint.update({
+      where: { id },
+      data: {
+        deletedAt: null,
+        status: 'INACTIVE',
+      },
+    });
   }
 }

@@ -60,4 +60,9 @@ export class PatrolPointsController {
   remove(@Param('id') id: string) {
     return this.patrolPointsService.remove(id);
   }
+
+  @Patch(':id/restore')
+  restore(@Param('id') id: string) {
+    return this.patrolPointsService.restore(id);
+  }
 }
