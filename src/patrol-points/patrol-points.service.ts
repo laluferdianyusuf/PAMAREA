@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreatePatrolPointDto } from './dto/create-patrol-points.dto.js';
 import { UpdatePatrolPointDto } from './dto/update-patrol-points.dto.js';
@@ -347,26 +348,29 @@ export class PatrolPointsService {
   }
 
   async remove(id: string) {
-    const existing = await this.prisma.patrolPoint.findFirst({
-      where: {
-        id,
-        deletedAt: null,
-      },
+    const existing = await this.prisma.patrolPoint.findUnique({
+      where: { id },
     });
 
     if (!existing) {
       throw new NotFoundException('Patrol point tidak ditemukan');
     }
 
-    return this.prisma.patrolPoint.update({
-      where: {
-        id,
-      },
+    try {
+      return await this.prisma.patrolPoint.delete({
+        where: { id },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2003'
+      ) {
+        throw new ConflictException(
+          'Patrol point tidak dapat dihapus karena masih digunakan oleh data lain',
+        );
+      }
 
-      data: {
-        deletedAt: new Date(),
-        status: 'INACTIVE',
-      },
-    });
+      throw error;
+    }
   }
 }
