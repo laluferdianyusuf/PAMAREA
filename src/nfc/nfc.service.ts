@@ -506,6 +506,14 @@ export class NfcService {
     return this.prisma.$transaction(async (tx) => {
       const nfc = await tx.nfcTag.findUnique({
         where: { id },
+        include: {
+          _count: {
+            select: {
+              assignments: true,
+              patrols: true,
+            },
+          },
+        },
       });
 
       if (!nfc) {
@@ -518,24 +526,15 @@ export class NfcService {
         );
       }
 
-      if (nfc.status === NfcStatus.INACTIVE) {
-        return tx.nfcTag.findUniqueOrThrow({
-          where: { id },
-          select: this.detailSelect(),
-        });
+      if (nfc._count.assignments > 0 || nfc._count.patrols > 0) {
+        throw new ConflictException(
+          'NFC tidak dapat dihapus karena memiliki riwayat assignment atau patroli',
+        );
       }
-
-      const updated = await tx.nfcTag.update({
-        where: { id },
-        data: {
-          status: NfcStatus.INACTIVE,
-        },
-        select: this.detailSelect(),
-      });
 
       await this.auditLogService.createAudit(tx, {
         userId: actorId,
-        action: 'REMOVE_NFC_TAG',
+        action: 'DELETE_NFC_TAG',
         entityType: 'NfcTag',
         entityId: id,
         oldData: {
@@ -543,14 +542,16 @@ export class NfcService {
           label: nfc.label,
           status: nfc.status,
         },
-        newData: {
-          uid: updated.uid,
-          label: updated.label,
-          status: updated.status,
-        },
       });
 
-      return updated;
+      await tx.nfcTag.delete({
+        where: { id },
+      });
+
+      return {
+        message: 'NFC Tag berhasil dihapus',
+        id,
+      };
     });
   }
 
