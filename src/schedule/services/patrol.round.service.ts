@@ -23,6 +23,13 @@ export class PatrolRoundService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private readonly activePatrolPointFilter = {
+    patrolPoint: {
+      status: 'ACTIVE' as const,
+      deletedAt: null,
+    },
+  };
+
   async reorderRoundCheckpoints(
     roundId: string,
     dto: ReorderRoundCheckpointsDto,
@@ -34,6 +41,7 @@ export class PatrolRoundService {
           where: { id: roundId },
           include: {
             checkpoints: {
+              where: this.activePatrolPointFilter,
               orderBy: { sequence: 'asc' },
               select: {
                 id: true,
@@ -76,14 +84,14 @@ export class PatrolRoundService {
           currentIds.some((id, index) => id !== requestedIds[index])
         ) {
           throw new BadRequestException(
-            'Daftar checkpoint harus mencakup seluruh checkpoint pada ronde ini tanpa menambah atau menghapus checkpoint',
+            'Daftar checkpoint harus mencakup seluruh checkpoint aktif pada ronde ini tanpa menambah atau menghapus checkpoint',
           );
         }
 
         for (const checkpoint of round.checkpoints) {
           if (checkpoint.status !== PatrolCheckpointStatus.PENDING) {
             throw new ConflictException(
-              'Ronde memiliki checkpoint yang bukan PENDING',
+              'Ronde memiliki checkpoint aktif yang bukan PENDING',
             );
           }
         }
@@ -99,6 +107,7 @@ export class PatrolRoundService {
         await tx.patrolCheckpoint.updateMany({
           where: {
             roundId,
+            ...this.activePatrolPointFilter,
           },
           data: {
             sequence: {
@@ -127,6 +136,7 @@ export class PatrolRoundService {
           },
           include: {
             checkpoints: {
+              where: this.activePatrolPointFilter,
               orderBy: {
                 sequence: 'asc',
               },
@@ -192,6 +202,7 @@ export class PatrolRoundService {
         },
         scheduleDate: true,
         checkpoints: {
+          where: this.activePatrolPointFilter,
           include: {
             patrolPoint: {
               select: {
@@ -217,14 +228,14 @@ export class PatrolRoundService {
   async start(id: string) {
     const round = await this.findById(id);
 
-    if (round.status !== 'PENDING') {
+    if (round.status !== PatrolRoundStatus.PENDING) {
       throw new ConflictException('Round cannot be started');
     }
 
     return this.prisma.patrolRound.update({
       where: { id },
       data: {
-        status: 'IN_PROGRESS',
+        status: PatrolRoundStatus.IN_PROGRESS,
         startedAt: new Date(),
       },
     });
@@ -261,6 +272,11 @@ export class PatrolRoundService {
         scheduleDate: {
           date: scheduleDate,
         },
+        checkpoints: {
+          some: {
+            ...this.activePatrolPointFilter,
+          },
+        },
       },
       include: {
         assignment: {
@@ -274,6 +290,7 @@ export class PatrolRoundService {
         },
         scheduleDate: true,
         checkpoints: {
+          where: this.activePatrolPointFilter,
           orderBy: {
             sequence: 'asc',
           },
@@ -385,23 +402,15 @@ export class PatrolRoundService {
       };
     }
 
-    if (date) {
-      const [year, month, day] = date.split('-').map(Number);
-
-      const startDate = new Date(Date.UTC(year, month - 1, day, -7, 0, 0, 0));
-
-      const endDate = new Date(startDate);
-      endDate.setUTCDate(endDate.getUTCDate() + 1);
-
-      dateFilter = {
-        gte: startDate,
-        lt: endDate,
-      };
-    }
-
     const searchValue = search?.trim();
 
     const where: Prisma.PatrolRoundWhereInput = {
+      checkpoints: {
+        some: {
+          ...this.activePatrolPointFilter,
+        },
+      },
+
       ...(dateFilter && {
         scheduleDate: {
           is: {
@@ -519,6 +528,7 @@ export class PatrolRoundService {
         },
 
         checkpoints: {
+          where: this.activePatrolPointFilter,
           select: {
             id: true,
             sequence: true,
@@ -583,7 +593,6 @@ export class PatrolRoundService {
 
         rounds: rounds.map(({ assignment, ...round }) => ({
           ...round,
-
           schedule: assignment.schedule,
         })),
       })),
@@ -592,6 +601,7 @@ export class PatrolRoundService {
 
   async getRounds(userId: string, date?: string) {
     await this.syncOverdueRounds();
+
     const dateKey = date ?? this.getTodayDateKey();
 
     if (!this.isValidDateKey(dateKey)) {
@@ -611,6 +621,11 @@ export class PatrolRoundService {
         scheduleDate: {
           date: scheduleDate,
         },
+        checkpoints: {
+          some: {
+            ...this.activePatrolPointFilter,
+          },
+        },
       },
       include: {
         assignment: {
@@ -624,6 +639,7 @@ export class PatrolRoundService {
         },
         scheduleDate: true,
         checkpoints: {
+          where: this.activePatrolPointFilter,
           orderBy: {
             sequence: 'asc',
           },
@@ -731,6 +747,7 @@ export class PatrolRoundService {
         },
         scheduleDate: true,
         checkpoints: {
+          where: this.activePatrolPointFilter,
           orderBy: {
             sequence: 'asc',
           },
@@ -826,10 +843,15 @@ export class PatrolRoundService {
     const overdueRounds = await this.prisma.patrolRound.findMany({
       where: {
         status: {
-          in: ['PENDING', 'IN_PROGRESS'],
+          in: [PatrolRoundStatus.PENDING, PatrolRoundStatus.IN_PROGRESS],
         },
         scheduledEndAt: {
           lt: now,
+        },
+        checkpoints: {
+          some: {
+            ...this.activePatrolPointFilter,
+          },
         },
       },
       select: {
@@ -850,6 +872,7 @@ export class PatrolRoundService {
             status: true,
             scheduledEndAt: true,
             checkpoints: {
+              where: this.activePatrolPointFilter,
               select: {
                 status: true,
               },
@@ -859,26 +882,30 @@ export class PatrolRoundService {
 
         if (
           !currentRound ||
-          !['PENDING', 'IN_PROGRESS'].includes(currentRound.status) ||
-          currentRound.scheduledEndAt >= now
+          (currentRound.status !== PatrolRoundStatus.PENDING &&
+            currentRound.status !== PatrolRoundStatus.IN_PROGRESS) ||
+          currentRound.scheduledEndAt >= now ||
+          currentRound.checkpoints.length === 0
         ) {
           return 0;
         }
 
         const hasCompletedCheckpoint = currentRound.checkpoints.some(
-          (checkpoint) => checkpoint.status === 'COMPLETED',
+          (checkpoint) =>
+            checkpoint.status === PatrolCheckpointStatus.COMPLETED,
         );
 
         const finalStatus =
-          currentRound.status === 'IN_PROGRESS' && hasCompletedCheckpoint
-            ? 'PARTIAL'
-            : 'MISSED';
+          currentRound.status === PatrolRoundStatus.IN_PROGRESS &&
+          hasCompletedCheckpoint
+            ? PatrolRoundStatus.PARTIAL
+            : PatrolRoundStatus.MISSED;
 
         const result = await tx.patrolRound.updateMany({
           where: {
             id: currentRound.id,
             status: {
-              in: ['PENDING', 'IN_PROGRESS'],
+              in: [PatrolRoundStatus.PENDING, PatrolRoundStatus.IN_PROGRESS],
             },
             scheduledEndAt: {
               lt: now,
@@ -897,10 +924,11 @@ export class PatrolRoundService {
         await tx.patrolCheckpoint.updateMany({
           where: {
             roundId: currentRound.id,
-            status: 'PENDING',
+            status: PatrolCheckpointStatus.PENDING,
+            ...this.activePatrolPointFilter,
           },
           data: {
-            status: 'MISSED',
+            status: PatrolCheckpointStatus.MISSED,
           },
         });
 
@@ -921,7 +949,7 @@ export class PatrolRoundService {
     timeZone: 'Asia/Jakarta',
   })
   async handleOverdueRounds() {
-    const result = await this.syncOverdueRounds();
+    await this.syncOverdueRounds();
   }
 
   private getTodayDateKey(): string {
