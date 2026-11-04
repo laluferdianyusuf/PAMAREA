@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 
 import { ScheduleTimeUtil } from '../../common/utils/schedule-time.util.js';
+import { Prisma } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { GenerateScheduleDto } from '../dto/generate.schedule.dto.js';
 
@@ -25,6 +26,19 @@ type RoundDefinition = {
   scheduledEndAt: Date;
 };
 
+type ExistingRound = Prisma.PatrolRoundGetPayload<{
+  include: {
+    checkpoints: {
+      select: {
+        id: true;
+        patrolPointId: true;
+        sequence: true;
+        status: true;
+      };
+    };
+  };
+}>;
+
 @Injectable()
 export class ScheduleGenerationService {
   constructor(private readonly prisma: PrismaService) {}
@@ -34,15 +48,25 @@ export class ScheduleGenerationService {
       where: { id: scheduleId },
       include: {
         points: {
-          include: { patrolPoint: true },
-          orderBy: { sequence: 'asc' },
+          include: {
+            patrolPoint: true,
+          },
+          orderBy: {
+            sequence: 'asc',
+          },
         },
         assignments: {
-          where: { status: 'ACTIVE' },
+          where: {
+            status: 'ACTIVE',
+          },
           include: {
             patrolPoints: {
-              include: { patrolPoint: true },
-              orderBy: { sequence: 'asc' },
+              include: {
+                patrolPoint: true,
+              },
+              orderBy: {
+                sequence: 'asc',
+              },
             },
             replacementsAsOriginal: {
               where: {
@@ -99,11 +123,7 @@ export class ScheduleGenerationService {
     let skippedRounds = 0;
 
     for (const date of this.getDates(startDate, endDate)) {
-      const result = await this.generateForDate(
-        schedule,
-        date,
-        dto.force ?? false,
-      );
+      const result = await this.generateForDate(schedule, date);
 
       generatedDates += result.dateCreated;
       generatedRounds += result.roundsCreated;
@@ -137,7 +157,7 @@ export class ScheduleGenerationService {
     }
   }
 
-  private async generateForDate(schedule: any, date: Date, force: boolean) {
+  private async generateForDate(schedule: any, date: Date) {
     let dateCreated = 0;
     let roundsCreated = 0;
     let checkpointsCreated = 0;
@@ -172,7 +192,6 @@ export class ScheduleGenerationService {
 
         dateCreated = 1;
       } catch (error) {
-        // Menangani kemungkinan request paralel membuat tanggal sama.
         scheduleDate = await this.prisma.patrolScheduleDate.findUnique({
           where: {
             scheduleId_date: {
@@ -204,6 +223,8 @@ export class ScheduleGenerationService {
         return false;
       }
 
+      // Assignment original tidak digunakan ketika
+      // sedang digantikan oleh assignment replacement.
       const isBeingReplaced = (assignment.replacementsAsOriginal ?? []).some(
         (replacement: any) => {
           return (
@@ -239,7 +260,6 @@ export class ScheduleGenerationService {
           assignment.id,
           round,
           route,
-          force,
         );
 
         if (result.created) {
@@ -267,48 +287,16 @@ export class ScheduleGenerationService {
     assignmentId: string,
     round: RoundDefinition,
     route: RoutePoint[],
-    force: boolean,
   ) {
     return this.prisma.$transaction(async (tx) => {
-      let existingRound = await tx.patrolRound.findUnique({
-        where: {
-          scheduleDateId_assignmentId_roundNumber: {
-            scheduleDateId,
-            assignmentId,
-            roundNumber: round.roundNumber,
-          },
-        },
-        include: {
-          checkpoints: {
-            select: {
-              id: true,
-              patrolPointId: true,
-              sequence: true,
-              status: true,
+      const existingRound: ExistingRound | null =
+        await tx.patrolRound.findUnique({
+          where: {
+            scheduleDateId_assignmentId_roundNumber: {
+              scheduleDateId,
+              assignmentId,
+              roundNumber: round.roundNumber,
             },
-          },
-        },
-      });
-
-      // Ronde selesai adalah riwayat dan tidak boleh diubah.
-      if (existingRound?.status === 'COMPLETED') {
-        return {
-          created: false,
-          skipped: true,
-          checkpointsCreated: 0,
-        };
-      }
-
-      let created = false;
-
-      if (!existingRound) {
-        existingRound = await tx.patrolRound.create({
-          data: {
-            scheduleDateId,
-            assignmentId,
-            roundNumber: round.roundNumber,
-            scheduledStartAt: round.scheduledStartAt,
-            scheduledEndAt: round.scheduledEndAt,
           },
           include: {
             checkpoints: {
@@ -318,13 +306,61 @@ export class ScheduleGenerationService {
                 sequence: true,
                 status: true,
               },
+              orderBy: {
+                sequence: 'asc',
+              },
             },
           },
         });
 
-        created = true;
+      if (existingRound && existingRound.status !== 'PENDING') {
+        return {
+          created: false,
+          skipped: true,
+          checkpointsCreated: 0,
+        };
       }
 
+      if (!existingRound) {
+        const randomizedRoute = this.shuffleRoute(route);
+
+        const newRound = await tx.patrolRound.create({
+          data: {
+            scheduleDateId,
+            assignmentId,
+            roundNumber: round.roundNumber,
+            scheduledStartAt: round.scheduledStartAt,
+            scheduledEndAt: round.scheduledEndAt,
+
+            routeType: 'RANDOM',
+          },
+        });
+
+        await tx.patrolCheckpoint.createMany({
+          data: randomizedRoute.map((point, index) => ({
+            roundId: newRound.id,
+            patrolPointId: point.patrolPointId,
+            sequence: index + 1,
+            required: point.required,
+            pointCodeSnapshot: point.patrolPoint.code,
+            pointNameSnapshot: point.patrolPoint.name,
+            radiusMetersSnapshot: point.patrolPoint.radiusMeters,
+          })),
+        });
+
+        return {
+          created: true,
+          skipped: false,
+          checkpointsCreated: randomizedRoute.length,
+        };
+      }
+
+      /**
+       * ROUND PENDING YANG SUDAH ADA
+       *
+       * Jangan mengacak ulang checkpoint lama.
+       * Ini penting agar urutan custom dari admin tetap tersimpan.
+       */
       const existingPointIds = new Set(
         existingRound.checkpoints.map((checkpoint) => checkpoint.patrolPointId),
       );
@@ -333,67 +369,63 @@ export class ScheduleGenerationService {
         (point) => !existingPointIds.has(point.patrolPointId),
       );
 
-      // Jika ronde sudah ada dan force=false, tetap sinkronkan
-      // checkpoint yang belum tersedia.
-      if (missingPoints.length > 0) {
-        // Pindahkan sequence lama sementara agar tidak bentrok
-        // dengan sequence akhir yang akan diterapkan.
-        await tx.patrolCheckpoint.updateMany({
-          where: { roundId: existingRound.id },
-          data: {
-            sequence: { increment: 100000 },
-          },
-        });
-
-        // Buat checkpoint baru dengan sequence sementara.
-        await tx.patrolCheckpoint.createMany({
-          data: missingPoints.map((point, index) => ({
-            roundId: existingRound.id,
-            patrolPointId: point.patrolPointId,
-            sequence: 200000 + index,
-            required: point.required,
-            pointCodeSnapshot: point.patrolPoint.code,
-            pointNameSnapshot: point.patrolPoint.name,
-            radiusMetersSnapshot: point.patrolPoint.radiusMeters,
-          })),
-        });
+      if (missingPoints.length === 0) {
+        return {
+          created: false,
+          skipped: false,
+          checkpointsCreated: 0,
+        };
       }
 
-      const checkpoints = await tx.patrolCheckpoint.findMany({
-        where: { roundId: existingRound.id },
-        select: {
-          id: true,
-          patrolPointId: true,
-          sequence: true,
-        },
-      });
-
-      const checkpointByPointId = new Map(
-        checkpoints.map((checkpoint) => [checkpoint.patrolPointId, checkpoint]),
+      /**
+       * Patrol point baru ditambahkan di akhir.
+       * Sequence lama tidak diubah.
+       */
+      const maxSequence = existingRound.checkpoints.reduce(
+        (max, checkpoint) => Math.max(max, checkpoint.sequence),
+        0,
       );
 
-      for (let index = 0; index < route.length; index++) {
-        const point = route[index];
-        const checkpoint = checkpointByPointId.get(point.patrolPointId);
-
-        if (!checkpoint) {
-          continue;
-        }
-
-        await tx.patrolCheckpoint.update({
-          where: { id: checkpoint.id },
-          data: { sequence: index + 1 },
-        });
-      }
+      await tx.patrolCheckpoint.createMany({
+        data: missingPoints.map((point, index) => ({
+          roundId: existingRound.id,
+          patrolPointId: point.patrolPointId,
+          sequence: maxSequence + index + 1,
+          required: point.required,
+          pointCodeSnapshot: point.patrolPoint.code,
+          pointNameSnapshot: point.patrolPoint.name,
+          radiusMetersSnapshot: point.patrolPoint.radiusMeters,
+        })),
+      });
 
       return {
-        created,
+        created: false,
         skipped: false,
         checkpointsCreated: missingPoints.length,
       };
     });
   }
 
+  /**
+   * Fisher-Yates Shuffle.
+   * Menghasilkan urutan acak tanpa mengubah array asli.
+   */
+  private shuffleRoute<T>(items: T[]): T[] {
+    const result = [...items];
+
+    for (let i = result.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+
+      [result[i], result[j]] = [result[j], result[i]];
+    }
+
+    return result;
+  }
+
+  /**
+   * Membuat pembagian round berdasarkan interval.
+   * Mendukung jadwal melewati tengah malam.
+   */
   private buildRounds(
     date: Date,
     startTime: string,
@@ -407,6 +439,7 @@ export class ScheduleGenerationService {
     }
 
     const startNormalized = ScheduleTimeUtil.normalizeTime(startTime);
+
     const endNormalized = ScheduleTimeUtil.normalizeTime(endTime);
 
     const [startHour, startMinute] = startNormalized.split(':').map(Number);
@@ -414,14 +447,17 @@ export class ScheduleGenerationService {
     const [endHour, endMinute] = endNormalized.split(':').map(Number);
 
     const startMinutes = startHour * 60 + startMinute;
+
     const endMinutes = endHour * 60 + endMinute;
 
     const endDayOffset = endMinutes <= startMinutes ? 1 : 0;
 
     const start = this.combineDateTime(date, startNormalized);
+
     const end = this.combineDateTime(date, endNormalized, endDayOffset);
 
     const rounds: RoundDefinition[] = [];
+
     let cursor = new Date(start);
     let roundNumber = 1;
 
@@ -452,10 +488,14 @@ export class ScheduleGenerationService {
   }
 
   private isAssignmentActive(
-    assignment: { startDate: Date; endDate: Date | null },
+    assignment: {
+      startDate: Date;
+      endDate: Date | null;
+    },
     date: Date,
   ): boolean {
     const start = new Date(assignment.startDate);
+
     const end = assignment.endDate ? new Date(assignment.endDate) : null;
 
     return date >= start && (!end || date <= end);
@@ -463,10 +503,12 @@ export class ScheduleGenerationService {
 
   private getDates(start: Date, end: Date): Date[] {
     const dates: Date[] = [];
+
     const current = new Date(start);
 
     while (current <= end) {
       dates.push(new Date(current));
+
       current.setUTCDate(current.getUTCDate() + 1);
     }
 

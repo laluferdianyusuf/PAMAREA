@@ -380,7 +380,13 @@ export class PatrolsService {
 
   async startPatrol(checkpointId: string, userId: string, dto: StartPatrolDto) {
     const checkpoint = await this.prisma.patrolCheckpoint.findUnique({
-      where: { id: checkpointId },
+      where: {
+        id: checkpointId,
+        patrolPoint: {
+          status: 'ACTIVE',
+          deletedAt: null,
+        },
+      },
       include: {
         round: {
           include: {
@@ -422,8 +428,8 @@ export class PatrolsService {
     }
 
     if (
-      checkpoint.status === PatrolCheckpointStatus.COMPLETED ||
-      checkpoint.status === PatrolCheckpointStatus.CANCELLED
+      checkpoint.status !== PatrolCheckpointStatus.PENDING &&
+      checkpoint.status !== PatrolCheckpointStatus.IN_PROGRESS
     ) {
       throw new UnprocessableEntityException({
         code: 'CHECKPOINT_NOT_AVAILABLE',
@@ -558,6 +564,7 @@ export class PatrolsService {
             scheduleDate: {
               date: today,
             },
+
             status: {
               in: ['PENDING', 'IN_PROGRESS'],
             },
@@ -571,6 +578,12 @@ export class PatrolsService {
             checkpoints: {
               orderBy: {
                 sequence: 'asc',
+              },
+              where: {
+                patrolPoint: {
+                  status: 'ACTIVE',
+                  deletedAt: null,
+                },
               },
             },
           },

@@ -952,6 +952,8 @@ model PatrolRound {
 
   status PatrolRoundStatus @default(PENDING)
 
+  routeType String @default("RANDOM") @map("route_type") @db.VarChar(20)
+
   startedAt DateTime? @map("started_at")
 
   completedAt DateTime? @map("completed_at")

@@ -39,6 +39,7 @@ export class PatrolRoundService {
                 id: true,
                 sequence: true,
                 status: true,
+                patrolPointId: true,
               },
             },
             assignment: {
@@ -89,40 +90,53 @@ export class PatrolRoundService {
 
         const oldOrder = round.checkpoints.map((checkpoint) => ({
           checkpointId: checkpoint.id,
+          patrolPointId: checkpoint.patrolPointId,
           sequence: checkpoint.sequence,
         }));
 
-        const temporaryOffset = round.checkpoints.length;
+        const temporaryOffset = round.checkpoints.length + 1000;
 
-        for (const checkpoint of round.checkpoints) {
-          await tx.patrolCheckpoint.update({
-            where: { id: checkpoint.id },
-            data: {
-              sequence: checkpoint.sequence + temporaryOffset,
+        await tx.patrolCheckpoint.updateMany({
+          where: {
+            roundId,
+          },
+          data: {
+            sequence: {
+              increment: temporaryOffset,
             },
-          });
-        }
+          },
+        });
 
         for (const [index, checkpointId] of dto.checkpointIds.entries()) {
           await tx.patrolCheckpoint.update({
-            where: { id: checkpointId },
+            where: {
+              id: checkpointId,
+            },
             data: {
               sequence: index + 1,
             },
           });
         }
 
-        const updated = await tx.patrolRound.findUniqueOrThrow({
-          where: { id: roundId },
+        const updated = await tx.patrolRound.update({
+          where: {
+            id: roundId,
+          },
+          data: {
+            routeType: 'MANUAL',
+          },
           include: {
             checkpoints: {
-              orderBy: { sequence: 'asc' },
+              orderBy: {
+                sequence: 'asc',
+              },
             },
           },
         });
 
         const newOrder = updated.checkpoints.map((checkpoint) => ({
           checkpointId: checkpoint.id,
+          patrolPointId: checkpoint.patrolPointId,
           sequence: checkpoint.sequence,
         }));
 
@@ -133,12 +147,14 @@ export class PatrolRoundService {
           entityId: roundId,
           oldData: {
             status: round.status,
+            routeType: round.routeType,
             scheduleId: round.assignment.schedule.id,
             scheduleName: round.assignment.schedule.name,
             checkpoints: oldOrder,
           },
           newData: {
             status: updated.status,
+            routeType: updated.routeType,
             scheduleId: round.assignment.schedule.id,
             scheduleName: round.assignment.schedule.name,
             checkpoints: newOrder,
@@ -148,6 +164,7 @@ export class PatrolRoundService {
         return {
           message: 'Urutan checkpoint ronde berhasil diperbarui',
           roundId,
+          routeType: updated.routeType,
           checkpoints: updated.checkpoints,
         };
       },
