@@ -391,10 +391,9 @@ export class PatrolRoundService {
     if (date) {
       const [year, month, day] = date.split('-').map(Number);
 
-      const startDate = new Date(Date.UTC(year, month - 1, day, -7, 0, 0, 0));
+      const startDate = new Date(Date.UTC(year, month - 1, day));
 
-      const endDate = new Date(startDate);
-      endDate.setUTCDate(endDate.getUTCDate() + 1);
+      const endDate = new Date(Date.UTC(year, month - 1, day + 1));
 
       dateFilter = {
         gte: startDate,

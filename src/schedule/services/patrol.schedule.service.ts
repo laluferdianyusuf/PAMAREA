@@ -750,88 +750,7 @@ export class PatrolScheduleService {
       userData.dates[dateString].push(entry);
     };
 
-    const assignments = await this.prisma.patrolScheduleAssignment.findMany({
-      where: {
-        schedule: siteFilter,
-        status: ScheduleAssignmentStatus.ACTIVE,
-        startDate: {
-          lte: endDate,
-        },
-        OR: [
-          {
-            endDate: null,
-          },
-          {
-            endDate: {
-              gte: startDate,
-            },
-          },
-        ],
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            fullName: true,
-            employeeNumber: true,
-          },
-        },
-        schedule: {
-          select: {
-            id: true,
-            name: true,
-            startTime: true,
-            endTime: true,
-            siteId: true,
-          },
-        },
-      },
-      orderBy: [
-        {
-          user: {
-            fullName: 'asc',
-          },
-        },
-        {
-          startDate: 'asc',
-        },
-      ],
-    });
-
-    for (const assignment of assignments) {
-      const userData = ensureRosterUser(assignment.user);
-
-      const range = getDateRange(assignment.startDate, assignment.endDate);
-
-      const cursor = range.start;
-      const lastDate = range.end.getTime();
-
-      while (cursor.getTime() <= lastDate) {
-        const dateString = formatDate(cursor);
-
-        addDateEntry(userData, dateString, {
-          assignmentId: assignment.id,
-          scheduleId: assignment.schedule.id,
-          scheduleName: assignment.schedule.name,
-          startTime: assignment.schedule.startTime,
-          endTime: assignment.schedule.endTime,
-          siteId: assignment.schedule.siteId,
-          startDate: formatDate(assignment.startDate),
-          endDate: assignment.endDate ? formatDate(assignment.endDate) : null,
-          type: 'ASSIGNMENT',
-          status: 'ACTIVE',
-        });
-
-        if (!userData.shifts[dateString]) {
-          userData.shifts[dateString] = getLegacyShiftCode(
-            assignment.schedule.name,
-          );
-        }
-
-        cursor.setUTCDate(cursor.getUTCDate() + 1);
-      }
-    }
-
+    // 1. Ambil data absence terlebih dahulu.
     const absences = await this.prisma.securityAbsence.findMany({
       where: {
         ...siteFilter,
@@ -881,6 +800,118 @@ export class PatrolScheduleService {
       },
     });
 
+    // 2. Kumpulkan ID assignment pengganti agar tidak tampil dua kali.
+    const replacementAssignmentIds = absences.flatMap((absence) =>
+      absence.replacements.map(
+        (replacement) => replacement.replacementAssignmentId,
+      ),
+    );
+
+    // 3. Helper untuk memeriksa apakah petugas sedang cuti pada tanggal tertentu.
+    const isUserAbsentOnDate = (userId: string, date: Date): boolean => {
+      return absences.some(
+        (absence) =>
+          absence.userId === userId &&
+          date >= absence.startDate &&
+          date <= absence.endDate,
+      );
+    };
+
+    // 4. Ambil assignment aktif, kecuali assignment pengganti.
+    const assignments = await this.prisma.patrolScheduleAssignment.findMany({
+      where: {
+        schedule: siteFilter,
+        status: ScheduleAssignmentStatus.ACTIVE,
+
+        ...(replacementAssignmentIds.length > 0 && {
+          id: {
+            notIn: replacementAssignmentIds,
+          },
+        }),
+
+        startDate: {
+          lte: endDate,
+        },
+        OR: [
+          {
+            endDate: null,
+          },
+          {
+            endDate: {
+              gte: startDate,
+            },
+          },
+        ],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            employeeNumber: true,
+          },
+        },
+        schedule: {
+          select: {
+            id: true,
+            name: true,
+            startTime: true,
+            endTime: true,
+            siteId: true,
+          },
+        },
+      },
+      orderBy: [
+        {
+          user: {
+            fullName: 'asc',
+          },
+        },
+        {
+          startDate: 'asc',
+        },
+      ],
+    });
+
+    // 5. Masukkan assignment biasa ke roster.
+    for (const assignment of assignments) {
+      const userData = ensureRosterUser(assignment.user);
+
+      const range = getDateRange(assignment.startDate, assignment.endDate);
+
+      const cursor = range.start;
+      const lastDate = range.end.getTime();
+
+      while (cursor.getTime() <= lastDate) {
+        const dateString = formatDate(cursor);
+
+        // Jangan tampilkan assignment asli pada tanggal petugas cuti.
+        if (!isUserAbsentOnDate(assignment.user.id, cursor)) {
+          addDateEntry(userData, dateString, {
+            assignmentId: assignment.id,
+            scheduleId: assignment.schedule.id,
+            scheduleName: assignment.schedule.name,
+            startTime: assignment.schedule.startTime,
+            endTime: assignment.schedule.endTime,
+            siteId: assignment.schedule.siteId,
+            startDate: formatDate(assignment.startDate),
+            endDate: assignment.endDate ? formatDate(assignment.endDate) : null,
+            type: 'ASSIGNMENT',
+            status: 'ACTIVE',
+          });
+
+          if (!userData.shifts[dateString]) {
+            userData.shifts[dateString] = getLegacyShiftCode(
+              assignment.schedule.name,
+            );
+          }
+        }
+
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    }
+
+    // 6. Masukkan data absence dan replacement.
     for (const absence of absences) {
       const originalUserData = ensureRosterUser(absence.user);
 
@@ -889,6 +920,7 @@ export class PatrolScheduleService {
       const absenceCursor = absenceRange.start;
       const absenceLastDate = absenceRange.end.getTime();
 
+      // 6a. Tampilkan status cuti pada roster petugas asli.
       while (absenceCursor.getTime() <= absenceLastDate) {
         const dateString = formatDate(absenceCursor);
 
@@ -913,6 +945,7 @@ export class PatrolScheduleService {
         absenceCursor.setUTCDate(absenceCursor.getUTCDate() + 1);
       }
 
+      // 6b. Tampilkan jadwal replacement pada roster petugas pengganti.
       for (const replacement of absence.replacements) {
         const replacementUser = replacement.replacementUser;
 
@@ -952,6 +985,13 @@ export class PatrolScheduleService {
             endDate: formatDate(replacement.endDate),
           });
 
+          // Isi kode shift untuk petugas pengganti.
+          if (!replacementUserData.shifts[dateString]) {
+            replacementUserData.shifts[dateString] = getLegacyShiftCode(
+              schedule.name,
+            );
+          }
+
           replacementUserData.shiftDetails[dateString] = {
             type: 'REPLACEMENT',
             status: 'REPLACEMENT',
@@ -983,7 +1023,6 @@ export class PatrolScheduleService {
 
     return Array.from(rosterMap.values());
   }
-
   async update(id: string, dto: UpdatePatrolScheduleDto, adminId: string) {
     const schedule = await this.repository.findBasicById(id);
 
