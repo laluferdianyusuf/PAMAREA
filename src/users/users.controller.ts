@@ -65,6 +65,17 @@ export class UsersController {
 
   @UseGuards(JwtAuthGuard)
   @Roles(RoleName.ADMIN)
+  @Patch(':id/change-password')
+  changeUserPassword(
+    @Param('id') id: string,
+    @Body() dto: ChangeUserPasswordDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.usersService.changeUserPassword(id, dto.newPassword, actorId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Roles(RoleName.ADMIN)
   @Patch(':id')
   update(
     @Param('id') id: string,
@@ -93,16 +104,5 @@ export class UsersController {
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() user: User) {
     return this.usersService.removeUser(id, user.id);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Roles(RoleName.ADMIN)
-  @Patch(':id/change-password')
-  changeUserPassword(
-    @Param('id') id: string,
-    @Body() dto: ChangeUserPasswordDto,
-    @CurrentUser('id') actorId: string,
-  ) {
-    return this.usersService.changeUserPassword(id, dto.newPassword, actorId);
   }
 }

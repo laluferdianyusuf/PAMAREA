@@ -1199,9 +1199,9 @@ export class PatrolScheduleService {
         throw new NotFoundException('Patrol schedule not found');
       }
 
-      if (schedule.status !== ScheduleStatus.DRAFT) {
-        throw new ConflictException('Only DRAFT schedule can be deleted');
-      }
+      // if (schedule.status !== ScheduleStatus.DRAFT) {
+      //   throw new ConflictException('Only DRAFT schedule can be deleted');
+      // }
 
       await this.auditLogService.createAudit(tx, {
         userId: adminId,

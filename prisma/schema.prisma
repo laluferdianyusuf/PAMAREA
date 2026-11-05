@@ -855,9 +855,9 @@ model ShiftChange {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
 
-  firstAssignment PatrolScheduleAssignment @relation("ShiftChangeFirstAssignment", fields: [firstAssignmentId], references: [id], onDelete: Restrict)
+  firstAssignment PatrolScheduleAssignment @relation("ShiftChangeFirstAssignment", fields: [firstAssignmentId], references: [id], onDelete: Cascade)
 
-  secondAssignment PatrolScheduleAssignment @relation("ShiftChangeSecondAssignment", fields: [secondAssignmentId], references: [id], onDelete: Restrict)
+  secondAssignment PatrolScheduleAssignment @relation("ShiftChangeSecondAssignment", fields: [secondAssignmentId], references: [id], onDelete: Cascade)
 
   @@index([effectiveDate, status])
   @@index([firstAssignmentId, effectiveDate])
@@ -917,9 +917,9 @@ model ScheduleReplacement {
 
   absence SecurityAbsence @relation(fields: [absenceId], references: [id], onDelete: Restrict)
 
-  originalAssignment PatrolScheduleAssignment @relation("ReplacementOriginalAssignment", fields: [originalAssignmentId], references: [id], onDelete: Restrict)
+  originalAssignment PatrolScheduleAssignment @relation("ReplacementOriginalAssignment", fields: [originalAssignmentId], references: [id], onDelete: Cascade)
 
-  replacementAssignment PatrolScheduleAssignment @relation("ReplacementAssignment", fields: [replacementAssignmentId], references: [id], onDelete: Restrict)
+  replacementAssignment PatrolScheduleAssignment @relation("ReplacementAssignment", fields: [replacementAssignmentId], references: [id], onDelete: Cascade)
 
   replacementUser User @relation("ReplacementUser", fields: [replacementUserId], references: [id], onDelete: Restrict)
 
@@ -1071,9 +1071,9 @@ model Patrol {
 
   patrolPoint PatrolPoint @relation(fields: [patrolPointId], references: [id])
 
-  scheduleAssignment PatrolScheduleAssignment? @relation(fields: [scheduleAssignmentId], references: [id])
+  scheduleAssignment PatrolScheduleAssignment? @relation(fields: [scheduleAssignmentId], references: [id], onDelete: Cascade)
 
-  checkpoint PatrolCheckpoint? @relation(fields: [checkpointId], references: [id])
+  checkpoint PatrolCheckpoint? @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
 
   device UserDevice? @relation(fields: [deviceId], references: [id])
 
