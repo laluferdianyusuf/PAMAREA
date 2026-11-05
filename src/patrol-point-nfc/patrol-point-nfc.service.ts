@@ -190,14 +190,18 @@ export class PatrolPointNfcService {
           include: this.assignmentInclude(),
         });
 
-        const updatedNfcTag = await tx.nfcTag.update({
-          where: {
-            id: nfcTag.id,
-          },
-          data: {
-            status: NfcStatus.UNASSIGNED,
-          },
-        });
+        let updatedNfcTag = nfcTag;
+
+        if (nfcTag.status === NfcStatus.ACTIVE) {
+          updatedNfcTag = await tx.nfcTag.update({
+            where: {
+              id: nfcTag.id,
+            },
+            data: {
+              status: NfcStatus.UNASSIGNED,
+            },
+          });
+        }
 
         const updatedPatrolPoint = await tx.patrolPoint.update({
           where: {
@@ -430,32 +434,32 @@ export class PatrolPointNfcService {
   }
 
   async replace(
-    assignmentId: string,
+    nfcTagId: string,
     dto: ReplaceNfcAssignmentDto,
     actorId: string,
   ) {
     return this.prisma.$transaction(
       async (tx) => {
-        const oldAssignment = await tx.patrolPointNfc.findUnique({
+        // 1. Cari assignment aktif berdasarkan NFC Tag ID lama
+        const oldAssignment = await tx.patrolPointNfc.findFirst({
           where: {
-            id: assignmentId,
+            nfcTagId,
+            status: 'ACTIVE',
           },
         });
 
         if (!oldAssignment) {
-          throw new NotFoundException('NFC assignment tidak ditemukan');
+          throw new NotFoundException('Assignment NFC aktif tidak ditemukan');
         }
 
-        if (oldAssignment.status !== NfcAssignmentStatus.ACTIVE) {
-          throw new ConflictException('Assignment tersebut sudah tidak aktif');
-        }
-
+        // 2. Pastikan NFC baru berbeda dari NFC lama
         if (oldAssignment.nfcTagId === dto.newNfcTagId) {
           throw new ConflictException(
             'NFC baru tidak boleh sama dengan NFC lama',
           );
         }
 
+        // 3. Ambil NFC lama
         const oldNfc = await tx.nfcTag.findUnique({
           where: {
             id: oldAssignment.nfcTagId,
@@ -466,6 +470,14 @@ export class PatrolPointNfcService {
           throw new NotFoundException('NFC lama tidak ditemukan');
         }
 
+        // 4. NFC lama harus DAMAGED atau LOST
+        if (!['DAMAGED', 'LOST'].includes(oldNfc.status)) {
+          throw new ConflictException(
+            'NFC lama harus berstatus DAMAGED atau LOST sebelum diganti',
+          );
+        }
+
+        // 5. Ambil NFC baru
         const newNfc = await tx.nfcTag.findUnique({
           where: {
             id: dto.newNfcTagId,
@@ -476,12 +488,26 @@ export class PatrolPointNfcService {
           throw new NotFoundException('NFC baru tidak ditemukan');
         }
 
-        if (newNfc.status !== NfcStatus.UNASSIGNED) {
+        // 6. NFC baru harus UNASSIGNED
+        if (newNfc.status !== 'UNASSIGNED') {
+          throw new ConflictException('NFC baru harus berstatus UNASSIGNED');
+        }
+
+        // 7. Pastikan NFC baru belum memiliki assignment aktif
+        const existingAssignment = await tx.patrolPointNfc.findFirst({
+          where: {
+            nfcTagId: dto.newNfcTagId,
+            status: 'ACTIVE',
+          },
+        });
+
+        if (existingAssignment) {
           throw new ConflictException(
-            `NFC baru harus UNASSIGNED, status saat ini ${newNfc.status}`,
+            'NFC baru sudah digunakan pada Patrol Point lain',
           );
         }
 
+        // 8. Ambil Patrol Point dari assignment lama
         const patrolPoint = await tx.patrolPoint.findUnique({
           where: {
             id: oldAssignment.patrolPointId,
@@ -489,51 +515,62 @@ export class PatrolPointNfcService {
         });
 
         if (!patrolPoint) {
-          throw new NotFoundException('Patrol point tidak ditemukan');
+          throw new NotFoundException('Patrol Point tidak ditemukan');
+        }
+
+        if (patrolPoint.deletedAt) {
+          throw new ConflictException('Patrol Point sudah dihapus');
         }
 
         if (patrolPoint.status !== 'ACTIVE') {
-          throw new ConflictException('Patrol point sedang tidak aktif');
+          throw new ConflictException('Patrol Point tidak aktif');
         }
 
-        const replacedAssignment = await tx.patrolPointNfc.update({
+        const now = new Date();
+        const reason = dto.reason?.trim() || 'NFC replacement';
+
+        // 9. Ubah assignment NFC lama menjadi REPLACED
+        await tx.patrolPointNfc.update({
           where: {
             id: oldAssignment.id,
           },
           data: {
-            status: NfcAssignmentStatus.REPLACED,
-            unassignedAt: new Date(),
-            reason: dto.reason?.trim() || 'NFC replaced',
+            status: 'REPLACED',
+            unassignedAt: now,
+            reason,
           },
         });
 
-        const replacedNfc = await tx.nfcTag.update({
+        // 10. Ubah status NFC lama menjadi REPLACED
+        await tx.nfcTag.update({
           where: {
-            id: oldAssignment.nfcTagId,
+            id: oldNfc.id,
           },
           data: {
-            status: NfcStatus.REPLACED,
+            status: 'REPLACED',
           },
         });
 
+        // 11. Buat assignment baru pada Patrol Point yang sama
         const newAssignment = await tx.patrolPointNfc.create({
           data: {
             patrolPointId: oldAssignment.patrolPointId,
-            nfcTagId: dto.newNfcTagId,
-            assignedAt: new Date(),
-            status: NfcAssignmentStatus.ACTIVE,
-            reason: dto.reason?.trim() || 'NFC replacement',
-            createdById: oldAssignment.createdById,
+            nfcTagId: newNfc.id,
+            status: 'ACTIVE',
+            assignedAt: now,
+            reason,
+            createdById: actorId,
           },
           include: this.assignmentInclude(),
         });
 
-        const activatedNfc = await tx.nfcTag.update({
+        // 12. Aktifkan NFC baru
+        await tx.nfcTag.update({
           where: {
-            id: dto.newNfcTagId,
+            id: newNfc.id,
           },
           data: {
-            status: NfcStatus.ACTIVE,
+            status: 'ACTIVE',
           },
         });
 
@@ -541,28 +578,21 @@ export class PatrolPointNfcService {
           userId: actorId,
           action: 'REPLACE_NFC_ASSIGNMENT',
           entityType: 'PatrolPointNfc',
-          entityId: oldAssignment.id,
+          entityId: newAssignment.id,
           oldData: {
             assignmentId: oldAssignment.id,
             patrolPointId: oldAssignment.patrolPointId,
             nfcTagId: oldNfc.id,
-            nfcTagUid: oldNfc.uid,
+            nfcStatus: oldNfc.status,
             assignmentStatus: oldAssignment.status,
-            nfcTagStatus: oldNfc.status,
           },
           newData: {
-            oldAssignmentId: replacedAssignment.id,
-            oldAssignmentStatus: replacedAssignment.status,
-            oldNfcId: replacedNfc.id,
-            oldNfcUid: replacedNfc.uid,
-            oldNfcStatus: replacedNfc.status,
-            newAssignmentId: newAssignment.id,
-            newAssignmentStatus: newAssignment.status,
-            newNfcId: activatedNfc.id,
-            newNfcUid: activatedNfc.uid,
-            newNfcStatus: activatedNfc.status,
-            patrolPointId: patrolPoint.id,
-            reason: dto.reason?.trim() || 'NFC replacement',
+            assignmentId: newAssignment.id,
+            patrolPointId: newAssignment.patrolPointId,
+            nfcTagId: newNfc.id,
+            nfcStatus: 'ACTIVE',
+            assignmentStatus: 'ACTIVE',
+            reason,
           },
         });
 
@@ -573,7 +603,6 @@ export class PatrolPointNfcService {
       },
     );
   }
-
   async validateNfc(nfcTagId: string) {
     const assignment = await this.prisma.patrolPointNfc.findFirst({
       where: {

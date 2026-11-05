@@ -416,6 +416,15 @@ export class NfcService {
         throw new NotFoundException('NFC lama tidak ditemukan');
       }
 
+      if (
+        oldNfc.status !== NfcStatus.DAMAGED &&
+        oldNfc.status !== NfcStatus.LOST
+      ) {
+        throw new ConflictException(
+          'Hanya NFC dengan status DAMAGED atau LOST yang dapat diganti',
+        );
+      }
+
       const newNfc = await tx.nfcTag.findUnique({
         where: {
           id: dto.newNfcTagId,
