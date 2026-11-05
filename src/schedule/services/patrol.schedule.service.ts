@@ -93,7 +93,9 @@ export class PatrolScheduleService {
     if (uniqueUserIds.length > 0) {
       const users = await this.prisma.user.findMany({
         where: {
-          id: { in: uniqueUserIds },
+          id: {
+            in: uniqueUserIds,
+          },
           status: UserStatus.ACTIVE,
           role: {
             name: RoleName.SECURITY,
@@ -324,7 +326,11 @@ export class PatrolScheduleService {
             gracePeriodMinutes: schedule.gracePeriodMinutes,
             enforceSequence: schedule.enforceSequence,
             status: schedule.status,
-            patrolPointIds: uniquePointIds,
+            patrolPoints: points.map((point, index) => ({
+              patrolPointId: point.patrolPointId,
+              sequence: index + 1,
+              required: point.required ?? true,
+            })),
             dates,
             assignments: assignments.map((assignment) => ({
               userId: assignment.userId,
