@@ -529,17 +529,17 @@ export class NfcService {
         throw new NotFoundException('NFC Tag tidak ditemukan');
       }
 
-      if (nfc.status === NfcStatus.ACTIVE) {
-        throw new ConflictException(
-          'NFC yang masih ACTIVE tidak dapat dihapus',
-        );
-      }
+      // if (nfc.status === NfcStatus.ACTIVE) {
+      //   throw new ConflictException(
+      //     'NFC yang masih ACTIVE tidak dapat dihapus',
+      //   );
+      // }
 
-      if (nfc._count.assignments > 0 || nfc._count.patrols > 0) {
-        throw new ConflictException(
-          'NFC tidak dapat dihapus karena memiliki riwayat assignment atau patroli',
-        );
-      }
+      // if (nfc._count.assignments > 0 || nfc._count.patrols > 0) {
+      //   throw new ConflictException(
+      //     'NFC tidak dapat dihapus karena memiliki riwayat assignment atau patroli',
+      //   );
+      // }
 
       await this.auditLogService.createAudit(tx, {
         userId: actorId,
