@@ -417,20 +417,6 @@ export class AuthService {
           expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         },
       });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: user.id,
-        action: 'REFRESH_TOKEN',
-        entityType: 'SESSION',
-        entityId: session.id,
-        newData: {
-          sessionId: session.id,
-          refreshedAt: refreshedAt.toISOString(),
-          expiresAt: new Date(
-            refreshedAt.getTime() + 30 * 24 * 60 * 60 * 1000,
-          ).toISOString(),
-        },
-      });
     });
 
     return {
@@ -470,19 +456,6 @@ export class AuthService {
             revokedAt,
           },
         });
-
-        await this.auditLogService.createAudit(tx, {
-          userId,
-          action: 'LOGOUT',
-          entityType: 'SESSION',
-          entityId: sessionId,
-          oldData: {
-            revokedAt: null,
-          },
-          newData: {
-            revokedAt: revokedAt.toISOString(),
-          },
-        });
       });
     }
 
@@ -512,18 +485,6 @@ export class AuthService {
         },
         data: {
           revokedAt,
-        },
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId,
-        action: 'LOGOUT_ALL',
-        entityType: 'USER',
-        entityId: userId,
-        newData: {
-          revokedSessions: result.count,
-          sessionIds: activeSessions.map((session) => session.id),
-          revokedAt: revokedAt.toISOString(),
         },
       });
 
@@ -634,19 +595,6 @@ export class AuthService {
                 description: true,
               },
             },
-          },
-        });
-
-        await this.auditLogService.createAudit(tx, {
-          userId,
-          action: 'CHANGE_MY_PHOTO',
-          entityType: 'USER',
-          entityId: userId,
-          oldData: {
-            photoUrl: user.photoUrl,
-          },
-          newData: {
-            photoUrl: updated.photoUrl,
           },
         });
 
