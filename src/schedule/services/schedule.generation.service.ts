@@ -13,6 +13,7 @@ import { GenerateScheduleDto } from '../dto/generate.schedule.dto.js';
 type RoutePoint = {
   patrolPointId: string;
   required: boolean;
+  sequence: number;
   patrolPoint: {
     code: string;
     name: string;
@@ -223,8 +224,6 @@ export class ScheduleGenerationService {
         return false;
       }
 
-      // Assignment original tidak digunakan ketika
-      // sedang digantikan oleh assignment replacement.
       const isBeingReplaced = (assignment.replacementsAsOriginal ?? []).some(
         (replacement: any) => {
           return (
@@ -322,8 +321,6 @@ export class ScheduleGenerationService {
       }
 
       if (!existingRound) {
-        const randomizedRoute = this.shuffleRoute(route);
-
         const newRound = await tx.patrolRound.create({
           data: {
             scheduleDateId,
@@ -331,13 +328,14 @@ export class ScheduleGenerationService {
             roundNumber: round.roundNumber,
             scheduledStartAt: round.scheduledStartAt,
             scheduledEndAt: round.scheduledEndAt,
-
-            routeType: 'RANDOM',
+            routeType: 'SEQUENTIAL',
           },
         });
 
+        const orderedRoute = [...route].sort((a, b) => a.sequence - b.sequence);
+
         await tx.patrolCheckpoint.createMany({
-          data: randomizedRoute.map((point, index) => ({
+          data: orderedRoute.map((point, index) => ({
             roundId: newRound.id,
             patrolPointId: point.patrolPointId,
             sequence: index + 1,
@@ -351,23 +349,17 @@ export class ScheduleGenerationService {
         return {
           created: true,
           skipped: false,
-          checkpointsCreated: randomizedRoute.length,
+          checkpointsCreated: orderedRoute.length,
         };
       }
 
-      /**
-       * ROUND PENDING YANG SUDAH ADA
-       *
-       * Jangan mengacak ulang checkpoint lama.
-       * Ini penting agar urutan custom dari admin tetap tersimpan.
-       */
       const existingPointIds = new Set(
         existingRound.checkpoints.map((checkpoint) => checkpoint.patrolPointId),
       );
 
-      const missingPoints = route.filter(
-        (point) => !existingPointIds.has(point.patrolPointId),
-      );
+      const missingPoints = [...route]
+        .sort((a, b) => a.sequence - b.sequence)
+        .filter((point) => !existingPointIds.has(point.patrolPointId));
 
       if (missingPoints.length === 0) {
         return {
@@ -377,10 +369,6 @@ export class ScheduleGenerationService {
         };
       }
 
-      /**
-       * Patrol point baru ditambahkan di akhir.
-       * Sequence lama tidak diubah.
-       */
       const maxSequence = existingRound.checkpoints.reduce(
         (max, checkpoint) => Math.max(max, checkpoint.sequence),
         0,
@@ -406,26 +394,6 @@ export class ScheduleGenerationService {
     });
   }
 
-  /**
-   * Fisher-Yates Shuffle.
-   * Menghasilkan urutan acak tanpa mengubah array asli.
-   */
-  private shuffleRoute<T>(items: T[]): T[] {
-    const result = [...items];
-
-    for (let i = result.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-
-      [result[i], result[j]] = [result[j], result[i]];
-    }
-
-    return result;
-  }
-
-  /**
-   * Membuat pembagian round berdasarkan interval.
-   * Mendukung jadwal melewati tengah malam.
-   */
   private buildRounds(
     date: Date,
     startTime: string,
@@ -439,21 +407,17 @@ export class ScheduleGenerationService {
     }
 
     const startNormalized = ScheduleTimeUtil.normalizeTime(startTime);
-
     const endNormalized = ScheduleTimeUtil.normalizeTime(endTime);
 
     const [startHour, startMinute] = startNormalized.split(':').map(Number);
-
     const [endHour, endMinute] = endNormalized.split(':').map(Number);
 
     const startMinutes = startHour * 60 + startMinute;
-
     const endMinutes = endHour * 60 + endMinute;
 
     const endDayOffset = endMinutes <= startMinutes ? 1 : 0;
 
     const start = this.combineDateTime(date, startNormalized);
-
     const end = this.combineDateTime(date, endNormalized, endDayOffset);
 
     const rounds: RoundDefinition[] = [];
@@ -495,7 +459,6 @@ export class ScheduleGenerationService {
     date: Date,
   ): boolean {
     const start = new Date(assignment.startDate);
-
     const end = assignment.endDate ? new Date(assignment.endDate) : null;
 
     return date >= start && (!end || date <= end);
@@ -503,12 +466,10 @@ export class ScheduleGenerationService {
 
   private getDates(start: Date, end: Date): Date[] {
     const dates: Date[] = [];
-
     const current = new Date(start);
 
     while (current <= end) {
       dates.push(new Date(current));
-
       current.setUTCDate(current.getUTCDate() + 1);
     }
 

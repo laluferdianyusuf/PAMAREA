@@ -391,7 +391,9 @@ export class PatrolsService {
         round: {
           include: {
             scheduleDate: {
-              include: { schedule: true },
+              include: {
+                schedule: true,
+              },
             },
             assignment: true,
           },
@@ -437,26 +439,32 @@ export class PatrolsService {
       });
     }
 
-    if (schedule.enforceSequence) {
-      const previousCheckpoint = await this.prisma.patrolCheckpoint.findFirst({
-        where: {
-          roundId: round.id,
-          sequence: { lt: checkpoint.sequence },
-          required: true,
-          status: { not: PatrolCheckpointStatus.COMPLETED },
+    const previousCheckpoint = await this.prisma.patrolCheckpoint.findFirst({
+      where: {
+        roundId: round.id,
+        sequence: {
+          lt: checkpoint.sequence,
         },
-        orderBy: { sequence: 'asc' },
-      });
+        required: true,
+        status: {
+          not: PatrolCheckpointStatus.COMPLETED,
+        },
+      },
+      orderBy: {
+        sequence: 'asc',
+      },
+    });
 
-      if (previousCheckpoint) {
-        throw new UnprocessableEntityException({
-          code: 'CHECKPOINT_SEQUENCE_REQUIRED',
-          message: 'Checkpoint sebelumnya belum selesai',
-          details: {
-            previousCheckpointId: previousCheckpoint.id,
-          },
-        });
-      }
+    if (previousCheckpoint) {
+      throw new UnprocessableEntityException({
+        code: 'CHECKPOINT_SEQUENCE_REQUIRED',
+        message: 'Checkpoint sebelumnya belum selesai',
+        details: {
+          previousCheckpointId: previousCheckpoint.id,
+          previousCheckpointName: previousCheckpoint.pointNameSnapshot,
+          previousSequence: previousCheckpoint.sequence,
+        },
+      });
     }
 
     const existingPatrol = await this.prisma.patrol.findFirst({
@@ -471,7 +479,9 @@ export class PatrolsService {
           ],
         },
       },
-      orderBy: { startedAt: 'desc' },
+      orderBy: {
+        startedAt: 'desc',
+      },
     });
 
     if (existingPatrol) {
@@ -497,7 +507,9 @@ export class PatrolsService {
       });
 
       await tx.patrolCheckpoint.update({
-        where: { id: checkpoint.id },
+        where: {
+          id: checkpoint.id,
+        },
         data: {
           status: PatrolCheckpointStatus.IN_PROGRESS,
         },
@@ -505,7 +517,9 @@ export class PatrolsService {
 
       if (round.status === PatrolRoundStatus.PENDING) {
         await tx.patrolRound.update({
-          where: { id: round.id },
+          where: {
+            id: round.id,
+          },
           data: {
             status: PatrolRoundStatus.IN_PROGRESS,
             startedAt,
@@ -554,8 +568,19 @@ export class PatrolsService {
       where: {
         userId,
         status: 'ACTIVE',
-        startDate: { lte: today },
-        OR: [{ endDate: null }, { endDate: { gte: today } }],
+        startDate: {
+          lte: today,
+        },
+        OR: [
+          {
+            endDate: null,
+          },
+          {
+            endDate: {
+              gte: today,
+            },
+          },
+        ],
       },
       include: {
         schedule: true,
@@ -564,11 +589,12 @@ export class PatrolsService {
             scheduleDate: {
               date: today,
             },
-
             status: {
-              in: ['PENDING', 'IN_PROGRESS'],
+              in: [PatrolRoundStatus.PENDING, PatrolRoundStatus.IN_PROGRESS],
             },
-            scheduledStartAt: { lte: now },
+            scheduledStartAt: {
+              lte: now,
+            },
           },
           orderBy: {
             scheduledStartAt: 'asc',
@@ -576,14 +602,14 @@ export class PatrolsService {
           include: {
             scheduleDate: true,
             checkpoints: {
-              orderBy: {
-                sequence: 'asc',
-              },
               where: {
                 patrolPoint: {
                   status: 'ACTIVE',
                   deletedAt: null,
                 },
+              },
+              orderBy: {
+                sequence: 'asc',
               },
             },
           },
@@ -599,8 +625,11 @@ export class PatrolsService {
         })),
       )
       .sort((a, b) => {
-        const aActive = a.round.status === 'IN_PROGRESS' ? 0 : 1;
-        const bActive = b.round.status === 'IN_PROGRESS' ? 0 : 1;
+        const aActive =
+          a.round.status === PatrolRoundStatus.IN_PROGRESS ? 0 : 1;
+
+        const bActive =
+          b.round.status === PatrolRoundStatus.IN_PROGRESS ? 0 : 1;
 
         return (
           aActive - bActive ||
@@ -623,41 +652,33 @@ export class PatrolsService {
     const deviceId = device.id;
 
     for (const { assignment, round } of rounds) {
-      let checkpoint;
-
-      if (assignment.schedule.enforceSequence) {
-        const previous = await this.prisma.patrolCheckpoint.findFirst({
-          where: {
-            roundId: round.id,
-            required: true,
-            status: {
-              not: 'COMPLETED',
-            },
+      const checkpoint = await this.prisma.patrolCheckpoint.findFirst({
+        where: {
+          roundId: round.id,
+          required: true,
+          status: {
+            not: PatrolCheckpointStatus.COMPLETED,
           },
-          orderBy: {
-            sequence: 'asc',
+          patrolPoint: {
+            status: 'ACTIVE',
+            deletedAt: null,
           },
-        });
+        },
+        orderBy: {
+          sequence: 'asc',
+        },
+      });
 
-        if (!previous) {
-          continue;
-        }
-
-        if (
-          previous.status !== 'PENDING' &&
-          previous.status !== 'IN_PROGRESS'
-        ) {
-          continue;
-        }
-
-        checkpoint = previous;
-      } else {
-        checkpoint = round.checkpoints.find(
-          (item) => item.status === 'PENDING' || item.status === 'IN_PROGRESS',
-        );
+      if (!checkpoint) {
+        continue;
       }
 
-      if (!checkpoint) continue;
+      if (
+        checkpoint.status !== PatrolCheckpointStatus.PENDING &&
+        checkpoint.status !== PatrolCheckpointStatus.IN_PROGRESS
+      ) {
+        continue;
+      }
 
       const existingPatrol = await this.prisma.patrol.findFirst({
         where: {
@@ -681,7 +702,7 @@ export class PatrolsService {
       }
 
       return this.startPatrol(checkpoint.id, userId, {
-        deviceId: deviceId ?? '',
+        deviceId,
       });
     }
 
