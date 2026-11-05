@@ -516,6 +516,7 @@ export class NfcService {
       const nfc = await tx.nfcTag.findUnique({
         where: { id },
         include: {
+          assignments: true,
           _count: {
             select: {
               assignments: true,
@@ -529,17 +530,32 @@ export class NfcService {
         throw new NotFoundException('NFC Tag tidak ditemukan');
       }
 
-      // if (nfc.status === NfcStatus.ACTIVE) {
-      //   throw new ConflictException(
-      //     'NFC yang masih ACTIVE tidak dapat dihapus',
-      //   );
-      // }
+      if (nfc.status === NfcStatus.ACTIVE) {
+        throw new ConflictException(
+          'NFC yang masih ACTIVE tidak dapat dihapus',
+        );
+      }
 
-      // if (nfc._count.assignments > 0 || nfc._count.patrols > 0) {
-      //   throw new ConflictException(
-      //     'NFC tidak dapat dihapus karena memiliki riwayat assignment atau patroli',
-      //   );
-      // }
+      if (nfc.status === NfcStatus.DAMAGED) {
+        throw new ConflictException(
+          'NFC DAMAGED tidak dapat dihapus. Gunakan proses penggantian NFC terlebih dahulu.',
+        );
+      }
+
+      const canDeleteHistory =
+        nfc.status === NfcStatus.LOST || nfc.status === NfcStatus.REPLACED;
+
+      if (!canDeleteHistory && nfc._count.assignments > 0) {
+        throw new ConflictException(
+          'NFC tidak dapat dihapus karena masih memiliki riwayat assignment.',
+        );
+      }
+
+      if (nfc._count.patrols > 0) {
+        throw new ConflictException(
+          'NFC tidak dapat dihapus karena masih memiliki riwayat patroli.',
+        );
+      }
 
       await this.auditLogService.createAudit(tx, {
         userId: actorId,
@@ -550,15 +566,25 @@ export class NfcService {
           uid: nfc.uid,
           label: nfc.label,
           status: nfc.status,
+          deletedAssignments: nfc._count.assignments,
         },
       });
+
+      // Hapus riwayat assignment hanya untuk LOST dan REPLACED.
+      if (canDeleteHistory && nfc._count.assignments > 0) {
+        await tx.patrolPointNfc.deleteMany({
+          where: {
+            nfcTagId: id,
+          },
+        });
+      }
 
       await tx.nfcTag.delete({
         where: { id },
       });
 
       return {
-        message: 'NFC Tag berhasil dihapus',
+        message: 'NFC Tag berhasil dihapus permanen',
         id,
       };
     });
