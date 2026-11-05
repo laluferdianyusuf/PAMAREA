@@ -118,4 +118,60 @@ export class AuditLogService {
 
     return auditLog;
   }
+
+  async remove(id: string) {
+    const auditLog = await this.prisma.auditLog.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!auditLog) {
+      throw new NotFoundException({
+        code: 'AUDIT_LOG_NOT_FOUND',
+        message: 'Riwayat audit tidak ditemukan',
+      });
+    }
+
+    await this.prisma.auditLog.delete({
+      where: { id },
+    });
+
+    return {
+      message: 'Riwayat audit berhasil dihapus',
+      deletedCount: 1,
+    };
+  }
+
+  async removeSelected(ids: string[]) {
+    const uniqueIds = [...new Set(ids)].filter(Boolean);
+
+    if (uniqueIds.length === 0) {
+      throw new NotFoundException({
+        code: 'AUDIT_LOG_IDS_REQUIRED',
+        message: 'Pilih minimal satu riwayat audit untuk dihapus',
+      });
+    }
+
+    const result = await this.prisma.auditLog.deleteMany({
+      where: {
+        id: {
+          in: uniqueIds,
+        },
+      },
+    });
+
+    return {
+      message: 'Riwayat audit yang dipilih berhasil dihapus',
+      deletedCount: result.count,
+    };
+  }
+
+  async removeAll() {
+    const result = await this.prisma.auditLog.deleteMany({});
+
+    return {
+      message: 'Seluruh riwayat audit berhasil dihapus',
+      deletedCount: result.count,
+    };
+  }
 }
