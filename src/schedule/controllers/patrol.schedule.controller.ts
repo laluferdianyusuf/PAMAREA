@@ -158,6 +158,12 @@ export class PatrolScheduleController {
     return this.service.archive(id, user.id);
   }
 
+  @Patch(':id/unarchive')
+  @Roles(RoleName.ADMIN)
+  unarchive(@Param('id') id: string, @CurrentUser() user: User) {
+    return this.service.unarchive(id, user.id);
+  }
+
   @Delete(':id')
   @Roles(RoleName.ADMIN)
   remove(@Param('id') id: string, @CurrentUser() user: User) {

@@ -379,7 +379,14 @@ export class PatrolScheduleService {
           },
           _count: {
             select: {
-              points: true,
+              points: {
+                where: {
+                  patrolPoint: {
+                    status: 'ACTIVE',
+                    deletedAt: null,
+                  },
+                },
+              },
               dates: true,
               assignments: true,
             },
@@ -1175,6 +1182,125 @@ export class PatrolScheduleService {
       await this.auditLogService.createAudit(tx, {
         userId: adminId,
         action: 'ARCHIVE',
+        entityType: 'PatrolSchedule',
+        entityId: id,
+        oldData: {
+          status: schedule.status,
+        },
+        newData: {
+          status: updated.status,
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  async unarchive(id: string, adminId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const schedule = await tx.patrolSchedule.findUnique({
+        where: { id },
+      });
+
+      if (!schedule) {
+        throw new NotFoundException('Patrol schedule not found');
+      }
+
+      if (schedule.status !== ScheduleStatus.ARCHIVED) {
+        throw new BadRequestException(
+          'Hanya schedule ARCHIVED yang bisa di-unarchive',
+        );
+      }
+
+      const existingSchedules = await tx.patrolSchedule.findMany({
+        where: {
+          siteId: schedule.siteId,
+          id: { not: id },
+          status: {
+            in: [ScheduleStatus.DRAFT, ScheduleStatus.ACTIVE],
+          },
+        },
+        select: {
+          id: true,
+          name: true,
+          startTime: true,
+          endTime: true,
+          status: true,
+        },
+      });
+
+      const duplicateName = existingSchedules.find(
+        (item) =>
+          item.name.trim().toLowerCase() === schedule.name.trim().toLowerCase(),
+      );
+
+      if (duplicateName) {
+        throw new ConflictException({
+          message: 'Nama schedule sudah digunakan pada site ini',
+          existingSchedule: {
+            id: duplicateName.id,
+            name: duplicateName.name,
+          },
+        });
+      }
+
+      const conflictingSchedule = existingSchedules.find((item) =>
+        this.timeRangesOverlap(
+          this.timeToMinutes(schedule.startTime),
+          this.timeToMinutes(schedule.endTime),
+          this.timeToMinutes(item.startTime),
+          this.timeToMinutes(item.endTime),
+        ),
+      );
+
+      if (conflictingSchedule) {
+        throw new ConflictException({
+          message: 'Jam schedule bentrok dengan schedule yang sudah ada',
+          existingSchedule: conflictingSchedule,
+        });
+      }
+
+      const updated = await tx.patrolSchedule.update({
+        where: { id },
+        data: {
+          status: ScheduleStatus.DRAFT,
+        },
+        include: {
+          site: true,
+          points: {
+            orderBy: {
+              sequence: 'asc',
+            },
+            include: {
+              patrolPoint: true,
+            },
+          },
+          dates: {
+            orderBy: {
+              date: 'asc',
+            },
+          },
+          assignments: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  employeeNumber: true,
+                  fullName: true,
+                  username: true,
+                },
+              },
+            },
+            orderBy: {
+              startDate: 'asc',
+            },
+          },
+        },
+      });
+
+      await this.auditLogService.createAudit(tx, {
+        userId: adminId,
+        action: 'UNARCHIVE',
         entityType: 'PatrolSchedule',
         entityId: id,
         oldData: {
