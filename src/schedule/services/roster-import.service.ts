@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+
 import {
   ScheduleAssignmentStatus,
   ScheduleStatus,
@@ -92,38 +93,36 @@ export class RosterImportService {
       );
     }
 
-    // Simpan semua assignment sekaligus.
-    const createdAssignments = await this.prisma.$transaction(
-      async (tx) => {
-        const created = [];
+    const assignmentData = validated.assignments.map((assignment) => ({
+      scheduleId: assignment.scheduleId,
+      userId: assignment.userId,
+      startDate: assignment.startDate,
+      endDate: assignment.endDate,
+      status: ScheduleAssignmentStatus.ACTIVE,
+      createdById,
+    }));
 
-        for (const assignment of validated.assignments) {
-          const result = await tx.patrolScheduleAssignment.create({
-            data: {
-              scheduleId: assignment.scheduleId,
-              userId: assignment.userId,
-              startDate: assignment.startDate,
-              endDate: assignment.endDate,
-              status: ScheduleAssignmentStatus.ACTIVE,
-              createdById,
-            },
-            select: {
-              id: true,
-              scheduleId: true,
-              userId: true,
-              startDate: true,
-              endDate: true,
-            },
+    const batchSize = this.getBatchSize(assignmentData.length);
+
+    const createdAssignmentCount = await this.prisma.$transaction(
+      async (tx) => {
+        let totalCreated = 0;
+
+        for (let i = 0; i < assignmentData.length; i += batchSize) {
+          const batch = assignmentData.slice(i, i + batchSize);
+
+          const result = await tx.patrolScheduleAssignment.createMany({
+            data: batch,
           });
 
-          created.push(result);
+          totalCreated += result.count;
         }
 
-        return created;
+        return totalCreated;
       },
       {
         maxWait: 10000,
-        timeout: 30000,
+        timeout: 120000,
       },
     );
 
@@ -202,11 +201,14 @@ export class RosterImportService {
         month: validated.workbook.month,
         year: validated.workbook.year,
         totalSecurity: validated.userCount,
-        totalAssignment: createdAssignments.length,
+        totalAssignment: createdAssignmentCount,
         totalShift: validated.shiftCount,
         totalOff: validated.offCount,
       },
-      assignments: createdAssignments,
+      assignments: {
+        count: createdAssignmentCount,
+        batchSize,
+      },
       generation: {
         success: generationResults.length - generationFailed.length,
         failed: generationFailed.length,
@@ -215,10 +217,18 @@ export class RosterImportService {
     };
   }
 
-  /**
-   * Validasi workbook dan membentuk assignment plan.
-   * Tidak ada perubahan database pada method ini.
-   */
+  private getBatchSize(total: number): number {
+    if (total <= 200) {
+      return 200;
+    }
+
+    if (total <= 1000) {
+      return 500;
+    }
+
+    return 1000;
+  }
+
   private async validateWorkbook(buffer: Buffer): Promise<ValidatedRoster> {
     const workbook = await this.rosterExcelService.parseRoster(buffer);
 
@@ -286,6 +296,7 @@ export class RosterImportService {
     });
 
     const userByEmployeeNumber = new Map<string, ResolvedRosterUser>();
+
     const userByUsername = new Map<string, ResolvedRosterUser>();
 
     for (const user of users) {
@@ -351,7 +362,6 @@ export class RosterImportService {
       });
     }
 
-    // Validasi schedule yang dirujuk oleh sheet Referensi Shift.
     const referencedScheduleIds = [
       ...new Set(
         workbook.shifts
@@ -458,10 +468,6 @@ export class RosterImportService {
     };
   }
 
-  /**
-   * Menggabungkan tanggal berurutan dengan schedule yang sama
-   * menjadi satu assignment.
-   */
   private buildSegments(
     row: ParsedRosterRow,
     user: ResolvedRosterUser,
@@ -562,10 +568,6 @@ export class RosterImportService {
     };
   }
 
-  /**
-   * Memeriksa bentrok terhadap semua assignment aktif
-   * milik satpam, bukan hanya schedule yang sama.
-   */
   private async validateAssignmentOverlaps(
     assignments: AssignmentPlan[],
     month: number,
@@ -578,6 +580,7 @@ export class RosterImportService {
     const userIds = [...new Set(assignments.map((item) => item.userId))];
 
     const monthStart = this.createDate(year, month, 1);
+
     const monthEnd = this.createDate(
       year,
       month,
@@ -646,7 +649,6 @@ export class RosterImportService {
       }
     }
 
-    // Pemeriksaan tambahan jika ada dua assignment import yang bertumpuk.
     for (let i = 0; i < assignments.length; i++) {
       for (let j = i + 1; j < assignments.length; j++) {
         const first = assignments[i];
