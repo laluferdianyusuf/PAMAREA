@@ -30,6 +30,86 @@ export class PatrolRoundService {
     },
   };
 
+  private async resolveRoundsDateKey(
+    userId: string,
+    requestedDate?: string,
+  ): Promise<string> {
+    if (requestedDate) {
+      return requestedDate;
+    }
+
+    const today = this.getTodayDateKey();
+
+    const [year, month, day] = today.split('-').map(Number);
+    const yesterdayDate = new Date(Date.UTC(year, month - 1, day - 1));
+
+    const yesterday = yesterdayDate.toISOString().slice(0, 10);
+
+    const now = new Date();
+
+    const timeParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Makassar',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(now);
+
+    const hour = Number(
+      timeParts.find((part) => part.type === 'hour')?.value ?? 0,
+    );
+
+    const minute = Number(
+      timeParts.find((part) => part.type === 'minute')?.value ?? 0,
+    );
+
+    const currentMinutes = hour * 60 + minute;
+
+    const previousDate = new Date(`${yesterday}T00:00:00.000Z`);
+
+    const previousRounds = await this.prisma.patrolRound.findMany({
+      where: {
+        assignment: {
+          userId,
+        },
+        scheduleDate: {
+          date: previousDate,
+        },
+      },
+      select: {
+        assignment: {
+          select: {
+            schedule: {
+              select: {
+                startTime: true,
+                endTime: true,
+              },
+            },
+          },
+        },
+      },
+      distinct: ['assignmentId'],
+    });
+
+    const hasOngoingNightShift = previousRounds.some((round) => {
+      const startTime = round.assignment.schedule.startTime;
+      const endTime = round.assignment.schedule.endTime;
+
+      const [startHour, startMinute] = startTime
+        .slice(0, 5)
+        .split(':')
+        .map(Number);
+
+      const [endHour, endMinute] = endTime.slice(0, 5).split(':').map(Number);
+
+      const startMinutes = startHour * 60 + startMinute;
+      const endMinutes = endHour * 60 + endMinute;
+
+      return startMinutes > endMinutes && currentMinutes <= endMinutes;
+    });
+
+    return hasOngoingNightShift ? yesterday : today;
+  }
+
   async reorderRoundCheckpoints(
     roundId: string,
     dto: ReorderRoundCheckpointsDto,
@@ -244,7 +324,7 @@ export class PatrolRoundService {
   async getRoundsByUser(userId: string, date?: string) {
     await this.syncOverdueRounds();
 
-    const dateKey = date ?? this.getTodayDateKey();
+    const dateKey = await this.resolveRoundsDateKey(userId, date);
 
     if (!this.isValidDateKey(dateKey)) {
       throw new BadRequestException({
@@ -601,7 +681,7 @@ export class PatrolRoundService {
   async getRounds(userId: string, date?: string) {
     await this.syncOverdueRounds();
 
-    const dateKey = date ?? this.getTodayDateKey();
+    const dateKey = await this.resolveRoundsDateKey(userId, date);
 
     if (!this.isValidDateKey(dateKey)) {
       throw new BadRequestException({
@@ -945,7 +1025,7 @@ export class PatrolRoundService {
   }
 
   @Cron('*/1 * * * *', {
-    timeZone: 'Asia/Jakarta',
+    timeZone: 'Asia/Makassar',
   })
   async handleOverdueRounds() {
     await this.syncOverdueRounds();
@@ -953,7 +1033,7 @@ export class PatrolRoundService {
 
   private getTodayDateKey(): string {
     const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Jakarta',
+      timeZone: 'Asia/Makassar',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',

@@ -311,7 +311,7 @@ export class PatrolsService {
   }
 
   async getToday(userId: string) {
-    const today = this.startOfToday();
+    const today = await this.getOperationalDate(userId);
 
     const assignments = await this.prisma.patrolScheduleAssignment.findMany({
       where: {
@@ -420,7 +420,7 @@ export class PatrolsService {
       });
     }
 
-    const today = this.startOfToday();
+    const today = await this.getOperationalDate(userId);
 
     if (new Date(round.scheduleDate.date).getTime() !== today.getTime()) {
       throw new UnprocessableEntityException({
@@ -561,7 +561,7 @@ export class PatrolsService {
   }
 
   async startNextPatrol(userId: string) {
-    const today = this.startOfToday();
+    const today = await this.getOperationalDate(userId);
     const now = new Date();
 
     const assignments = await this.prisma.patrolScheduleAssignment.findMany({
@@ -1295,6 +1295,79 @@ export class PatrolsService {
     return this.getPatrol(result.id, userId);
   }
 
+  private async getOperationalDate(userId: string): Promise<Date> {
+    const today = this.startOfToday();
+
+    const yesterday = new Date(today);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+
+    const timeParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Makassar',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date());
+
+    const hour = Number(
+      timeParts.find((part) => part.type === 'hour')?.value ?? 0,
+    );
+
+    const minute = Number(
+      timeParts.find((part) => part.type === 'minute')?.value ?? 0,
+    );
+
+    const currentMinutes = hour * 60 + minute;
+
+    const previousAssignments =
+      await this.prisma.patrolScheduleAssignment.findMany({
+        where: {
+          userId,
+          status: 'ACTIVE',
+          startDate: {
+            lte: yesterday,
+          },
+          OR: [{ endDate: null }, { endDate: { gte: yesterday } }],
+          rounds: {
+            some: {
+              scheduleDate: {
+                date: yesterday,
+              },
+              status: {
+                in: [PatrolRoundStatus.PENDING, PatrolRoundStatus.IN_PROGRESS],
+              },
+            },
+          },
+        },
+        select: {
+          schedule: {
+            select: {
+              startTime: true,
+              endTime: true,
+            },
+          },
+        },
+      });
+
+    const hasOngoingNightShift = previousAssignments.some((assignment) => {
+      const startTime = assignment.schedule.startTime;
+      const endTime = assignment.schedule.endTime;
+
+      const [startHour, startMinute] = startTime
+        .slice(0, 5)
+        .split(':')
+        .map(Number);
+
+      const [endHour, endMinute] = endTime.slice(0, 5).split(':').map(Number);
+
+      const startMinutes = startHour * 60 + startMinute;
+      const endMinutes = endHour * 60 + endMinute;
+
+      return startMinutes > endMinutes && currentMinutes <= endMinutes;
+    });
+
+    return hasOngoingNightShift ? yesterday : today;
+  }
+
   private async validateRequiredAnswers(
     patrolId: string,
     patrolPointId: string,
@@ -1550,7 +1623,7 @@ export class PatrolsService {
 
   private startOfToday(): Date {
     const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'Asia/Jakarta',
+      timeZone: 'Asia/Makassar',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
