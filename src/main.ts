@@ -39,17 +39,19 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api/v1');
 
-  const uploadDirectory = resolve(process.cwd(), 'uploads');
-
-  app.useStaticAssets(uploadDirectory, {
-    prefix: '/uploads/',
-  });
-
+  // CORS harus dijalankan sebelum static assets.
   app.enableCors({
     origin: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
     credentials: true,
+  });
+
+  // Static uploads.
+  const uploadDirectory = resolve(process.cwd(), 'uploads');
+
+  app.useStaticAssets(uploadDirectory, {
+    prefix: '/uploads/',
   });
 
   app.useGlobalPipes(
@@ -64,8 +66,8 @@ async function bootstrap() {
 
   await app.listen(port, '0.0.0.0');
 
-  console.log(`Server running on http://localhost:${port}`);
-  console.log(`Static uploads: http://localhost:${port}/uploads/`);
+  console.log(`Server running on port ${port}`);
+  console.log(`Static uploads directory: ${uploadDirectory}`);
 }
 
 bootstrap();
