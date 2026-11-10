@@ -8,6 +8,7 @@ import {
   Put,
   Query,
   Req,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -16,22 +17,28 @@ import {
 import { PatrolsService } from './patrols.service.js';
 
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { memoryStorage } from 'multer';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { Roles } from '../common/decorators/roles.decorator.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import type { PatrolStatus, User } from '../generated/prisma/client.js';
 import { BypassNfcDto } from './dto/bypass-nfc.dto.js';
+import { ExportPatrolHistoryDto } from './dto/export-patrol-history.dto.js';
 import { StartPatrolDto } from './dto/start-patrol.dto.js';
 import { SubmitAnswersDto } from './dto/submit-answers.dto.js';
 import { SubmitPhotoDto } from './dto/submit-photo.dto.js';
 import { ValidateLocationDto } from './dto/validate-location.dto.js';
 import { ValidateNfcDto } from './dto/validate-nfc.dto.js';
+import { PatrolHistoryExportService } from './patrol-history-export.service.js';
 
 @Controller('patrols')
 @UseGuards(JwtAuthGuard)
 export class PatrolsController {
-  constructor(private readonly patrolsService: PatrolsService) {}
+  constructor(
+    private readonly patrolsService: PatrolsService,
+    private readonly patrolHistoryExportService: PatrolHistoryExportService,
+  ) {}
 
   @Get('today')
   getToday(@CurrentUser() user: User) {
@@ -147,5 +154,26 @@ export class PatrolsController {
   @Post(':patrolId/submit')
   submitPatrol(@Param('patrolId') patrolId: string, @CurrentUser() user: User) {
     return this.patrolsService.submitPatrol(patrolId, user.id);
+  }
+
+  @Post('export-excel')
+  @Roles('ADMIN')
+  async exportExcel(@Body() dto: ExportPatrolHistoryDto, @Res() res: Response) {
+    const buffer = await this.patrolHistoryExportService.export(dto);
+
+    const dateParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Makassar',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+
+    const filename = `Laporan-Patroli-${dateParts}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+
+    res.end(buffer);
   }
 }
