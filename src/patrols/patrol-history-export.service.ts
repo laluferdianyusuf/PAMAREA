@@ -628,7 +628,7 @@ export class PatrolHistoryExportService {
     patrols.forEach((patrol, index) => {
       worksheet.addRow({
         no: index + 1,
-        reportNumber: patrol.reportNumber,
+        reportNumber: patrol.reportNumber ?? '-',
         site: patrol.site?.name ?? '-',
         pointCode: patrol.patrolPoint?.code ?? '-',
         pointName: patrol.patrolPoint?.name ?? '-',
@@ -653,24 +653,20 @@ export class PatrolHistoryExportService {
     this.styleDataRows(worksheet);
 
     for (let row = 5; row <= worksheet.rowCount; row++) {
+      const patrol = patrols[row - 5];
+
       worksheet.getCell(row, 9).numFmt = 'dd mmm yyyy hh:mm';
       worksheet.getCell(row, 10).numFmt = 'dd mmm yyyy hh:mm';
       worksheet.getCell(row, 13).numFmt = '0.00';
       worksheet.getCell(row, 14).numFmt = '0.00';
 
-      this.styleStatus(
-        worksheet.getCell(row, 12),
-        patrols[row - 5].gpsValidationStatus,
-      );
-      this.styleStatus(
-        worksheet.getCell(row, 15),
-        patrols[row - 5].nfcValidationStatus,
-      );
-      this.styleStatus(
-        worksheet.getCell(row, 19),
-        patrols[row - 5].checkpoint?.status,
-      );
-      this.styleStatus(worksheet.getCell(row, 20), patrols[row - 5].status);
+      this.styleStatus(worksheet.getCell(row, 12), patrol.gpsValidationStatus);
+
+      this.styleStatus(worksheet.getCell(row, 15), patrol.nfcValidationStatus);
+
+      this.styleStatus(worksheet.getCell(row, 19), patrol.checkpoint?.status);
+
+      this.styleStatus(worksheet.getCell(row, 20), patrol.status);
     }
   }
 
