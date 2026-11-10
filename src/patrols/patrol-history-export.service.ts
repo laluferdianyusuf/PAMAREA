@@ -214,6 +214,7 @@ export class PatrolHistoryExportService {
     }
 
     const timestamp = this.getWitaDateKey(new Date());
+
     const exportedAt = new Intl.DateTimeFormat('id-ID', {
       timeZone: 'Asia/Makassar',
       dateStyle: 'long',
@@ -221,7 +222,9 @@ export class PatrolHistoryExportService {
     }).format(new Date());
 
     const siteName =
-      dto.siteId && dto.siteId !== 'all' ? patrols[0].site.name : 'Semua Site';
+      dto.siteId && dto.siteId !== 'all'
+        ? (patrols[0]?.site?.name ?? 'Site Tidak Diketahui')
+        : 'Semua Site';
 
     const subtitle = `PAMAREA | ${siteName} | Diekspor ${exportedAt}`;
 
@@ -245,11 +248,13 @@ export class PatrolHistoryExportService {
     const findingSheet = findingWorkbook.addWorksheet('Temuan');
 
     this.buildHistorySheet(historySheet, patrols, subtitle);
+
     const answerPhotoTasks = this.buildAnswerSheet(
       answerSheet,
       patrols,
       subtitle,
     );
+
     const findingPhotoTasks = this.buildFindingSheet(
       findingSheet,
       patrols,
@@ -360,11 +365,15 @@ export class PatrolHistoryExportService {
   ) {
     const lastColumn = worksheet.columns.length;
 
+    // Header dari worksheet.columns akan berpindah ke baris 4.
+    // Data nantinya dimulai dari baris 5.
     worksheet.spliceRows(1, 0, [], [], []);
+
     worksheet.mergeCells(1, 1, 1, lastColumn);
     worksheet.mergeCells(2, 1, 2, lastColumn);
 
     const titleCell = worksheet.getCell(1, 1);
+
     titleCell.value = title;
     titleCell.font = {
       name: 'Aptos Display',
@@ -384,6 +393,7 @@ export class PatrolHistoryExportService {
     };
 
     const subtitleCell = worksheet.getCell(2, 1);
+
     subtitleCell.value = subtitle;
     subtitleCell.font = {
       name: 'Aptos',
@@ -406,6 +416,7 @@ export class PatrolHistoryExportService {
     worksheet.getRow(3).height = 10;
 
     const header = worksheet.getRow(4);
+
     header.height = 34;
 
     header.eachCell((cell) => {
@@ -415,16 +426,19 @@ export class PatrolHistoryExportService {
         bold: true,
         color: { argb: this.colors.white },
       };
+
       cell.fill = {
         type: 'pattern',
         pattern: 'solid',
         fgColor: { argb: this.colors.navy },
       };
+
       cell.alignment = {
         vertical: 'middle',
         horizontal: 'center',
         wrapText: true,
       };
+
       cell.border = {
         bottom: {
           style: 'medium',
@@ -442,6 +456,7 @@ export class PatrolHistoryExportService {
 
     worksheet.properties.defaultRowHeight = 25;
     worksheet.properties.showGridLines = false;
+
     worksheet.autoFilter = {
       from: {
         row: 4,
@@ -477,6 +492,7 @@ export class PatrolHistoryExportService {
       rowNumber++
     ) {
       const row = worksheet.getRow(rowNumber);
+
       row.height = 25;
 
       row.eachCell((cell) => {
@@ -563,7 +579,9 @@ export class PatrolHistoryExportService {
     startedAt: Date | null,
     completedAt: Date | null,
   ): string {
-    if (!startedAt || !completedAt) return '-';
+    if (!startedAt || !completedAt) {
+      return '-';
+    }
 
     const milliseconds =
       new Date(completedAt).getTime() - new Date(startedAt).getTime();
@@ -594,6 +612,10 @@ export class PatrolHistoryExportService {
     return status ? (labels[status] ?? status) : '-';
   }
 
+  // ============================================================
+  // SHEET 1: RIWAYAT PATROLI
+  // ============================================================
+
   private buildHistorySheet(
     worksheet: ExcelJS.Worksheet,
     patrols: any[],
@@ -622,7 +644,9 @@ export class PatrolHistoryExportService {
       { header: 'Status Patroli', key: 'status', width: 18 },
     ];
 
-    worksheet.addRow({});
+    // Jangan menambahkan worksheet.addRow({}) di sini.
+    // Baris 1-3 digunakan untuk judul dan subtitle.
+    // Header berada di baris 4, data mulai baris 5.
     this.styleWorksheet(worksheet, 'LAPORAN RIWAYAT PATROLI', subtitle);
 
     patrols.forEach((patrol, index) => {
@@ -652,23 +676,41 @@ export class PatrolHistoryExportService {
 
     this.styleDataRows(worksheet);
 
-    for (let row = 5; row <= worksheet.rowCount; row++) {
-      const patrol = patrols[row - 5];
+    // Styling berdasarkan array patrols, bukan rowCount.
+    // Mencegah akses patrols[index] di luar batas array.
+    for (let index = 0; index < patrols.length; index++) {
+      const rowNumber = index + 5;
+      const patrol = patrols[index];
 
-      worksheet.getCell(row, 9).numFmt = 'dd mmm yyyy hh:mm';
-      worksheet.getCell(row, 10).numFmt = 'dd mmm yyyy hh:mm';
-      worksheet.getCell(row, 13).numFmt = '0.00';
-      worksheet.getCell(row, 14).numFmt = '0.00';
+      worksheet.getCell(rowNumber, 9).numFmt = 'dd mmm yyyy hh:mm';
 
-      this.styleStatus(worksheet.getCell(row, 12), patrol.gpsValidationStatus);
+      worksheet.getCell(rowNumber, 10).numFmt = 'dd mmm yyyy hh:mm';
 
-      this.styleStatus(worksheet.getCell(row, 15), patrol.nfcValidationStatus);
+      worksheet.getCell(rowNumber, 13).numFmt = '0.00';
+      worksheet.getCell(rowNumber, 14).numFmt = '0.00';
 
-      this.styleStatus(worksheet.getCell(row, 19), patrol.checkpoint?.status);
+      this.styleStatus(
+        worksheet.getCell(rowNumber, 12),
+        patrol.gpsValidationStatus,
+      );
 
-      this.styleStatus(worksheet.getCell(row, 20), patrol.status);
+      this.styleStatus(
+        worksheet.getCell(rowNumber, 15),
+        patrol.nfcValidationStatus,
+      );
+
+      this.styleStatus(
+        worksheet.getCell(rowNumber, 19),
+        patrol.checkpoint?.status,
+      );
+
+      this.styleStatus(worksheet.getCell(rowNumber, 20), patrol.status);
     }
   }
+
+  // ============================================================
+  // SHEET 2: JAWABAN PATROLI
+  // ============================================================
 
   private buildAnswerSheet(
     worksheet: ExcelJS.Worksheet,
@@ -716,7 +758,8 @@ export class PatrolHistoryExportService {
     }
 
     worksheet.columns = columns;
-    worksheet.addRow({});
+
+    // Jangan menambahkan worksheet.addRow({}) di sini.
     this.styleWorksheet(worksheet, 'LAPORAN JAWABAN PATROLI', subtitle);
 
     const tasks: PhotoTask[] = [];
@@ -742,6 +785,7 @@ export class PatrolHistoryExportService {
 
         if (photo?.fileUrl) {
           tasks.push({
+            // Data pertama dimulai dari baris 5.
             rowIndex: index + 5,
             columnIndex: 10 + photoIndex,
             fileUrl: photo.fileUrl,
@@ -755,12 +799,18 @@ export class PatrolHistoryExportService {
 
     this.styleDataRows(worksheet);
 
-    for (let row = 5; row <= worksheet.rowCount; row++) {
-      worksheet.getCell(row, 6).numFmt = 'dd mmm yyyy hh:mm';
+    for (let index = 0; index < answers.length; index++) {
+      const rowNumber = index + 5;
+
+      worksheet.getCell(rowNumber, 6).numFmt = 'dd mmm yyyy hh:mm';
     }
 
     return tasks;
   }
+
+  // ============================================================
+  // SHEET 3: TEMUAN PATROLI
+  // ============================================================
 
   private buildFindingSheet(
     worksheet: ExcelJS.Worksheet,
@@ -820,7 +870,8 @@ export class PatrolHistoryExportService {
     }
 
     worksheet.columns = columns;
-    worksheet.addRow({});
+
+    // Jangan menambahkan worksheet.addRow({}) di sini.
     this.styleWorksheet(worksheet, 'LAPORAN TEMUAN PATROLI', subtitle);
 
     const tasks: PhotoTask[] = [];
@@ -852,6 +903,7 @@ export class PatrolHistoryExportService {
 
         if (photo?.fileUrl) {
           tasks.push({
+            // Data pertama dimulai dari baris 5.
             rowIndex: index + 5,
             columnIndex: 16 + photoIndex,
             fileUrl: photo.fileUrl,
@@ -865,22 +917,34 @@ export class PatrolHistoryExportService {
 
     this.styleDataRows(worksheet);
 
-    for (let row = 5; row <= worksheet.rowCount; row++) {
-      worksheet.getCell(row, 9).numFmt = 'dd mmm yyyy hh:mm';
-      worksheet.getCell(row, 15).numFmt = 'dd mmm yyyy hh:mm';
+    // Styling menggunakan panjang array findings.
+    // Tidak lagi menggunakan findings[row - 5] dari rowCount.
+    for (let index = 0; index < findings.length; index++) {
+      const rowNumber = index + 5;
+      const finding = findings[index];
 
-      this.styleStatus(worksheet.getCell(row, 13), findings[row - 5].status);
+      worksheet.getCell(rowNumber, 9).numFmt = 'dd mmm yyyy hh:mm';
+
+      worksheet.getCell(rowNumber, 15).numFmt = 'dd mmm yyyy hh:mm';
+
+      this.styleStatus(worksheet.getCell(rowNumber, 13), finding.status);
     }
 
     return tasks;
   }
+
+  // ============================================================
+  // EMBED FOTO KE EXCEL
+  // ============================================================
 
   private async embedPhotos(workbook: ExcelJS.Workbook, tasks: PhotoTask[]) {
     await this.mapWithConcurrency(tasks, 6, async (task) => {
       try {
         const photo = await this.readPhoto(task.fileUrl);
 
-        if (!photo) return;
+        if (!photo) {
+          return;
+        }
 
         const imageId = workbook.addImage({
           base64: `data:image/${photo.extension};base64,${photo.base64}`,
@@ -911,13 +975,18 @@ export class PatrolHistoryExportService {
   }
 
   private async readPhoto(fileUrl: string): Promise<PhotoResult | null> {
-    if (!fileUrl) return null;
+    if (!fileUrl) {
+      return null;
+    }
 
     const cached = this.photoCache.get(fileUrl);
 
-    if (cached) return cached;
+    if (cached) {
+      return cached;
+    }
 
     const promise = this.readPhotoFile(fileUrl);
+
     this.photoCache.set(fileUrl, promise);
 
     return promise;
@@ -936,6 +1005,7 @@ export class PatrolHistoryExportService {
       buffer = Buffer.from(await response.arrayBuffer());
     } else {
       const pathname = fileUrl.split('?')[0];
+
       const relativePath = decodeURIComponent(pathname.replace(/^\/+/, ''));
 
       const uploadRoot = resolve(process.cwd(), 'uploads');
@@ -972,6 +1042,10 @@ export class PatrolHistoryExportService {
     };
   }
 
+  // ============================================================
+  // CONCURRENCY HELPER
+  // ============================================================
+
   private async mapWithConcurrency<T>(
     items: T[],
     concurrency: number,
@@ -987,7 +1061,9 @@ export class PatrolHistoryExportService {
         while (true) {
           const index = currentIndex++;
 
-          if (index >= items.length) return;
+          if (index >= items.length) {
+            return;
+          }
 
           await callback(items[index]);
         }
