@@ -82,21 +82,6 @@ export class PatrolSchedulePointService {
         },
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: adminId,
-        action: 'ADD_SCHEDULE_POINT',
-        entityType: 'PatrolSchedulePoint',
-        entityId: created.id,
-        newData: {
-          scheduleId,
-          patrolPointId: created.patrolPointId,
-          patrolPointCode: created.patrolPoint.code,
-          patrolPointName: created.patrolPoint.name,
-          sequence: created.sequence,
-          required: created.required,
-        },
-      });
-
       return created;
     });
   }
@@ -241,25 +226,6 @@ export class PatrolSchedulePointService {
           newPointIds.includes(item.patrolPointId),
         );
 
-        await this.auditLogService.createAudit(tx, {
-          userId: adminId,
-          action: 'ADD_SCHEDULE_POINTS',
-          entityType: 'PatrolSchedule',
-          entityId: scheduleId,
-          newData: {
-            addedCount: addedPoints.length,
-            skippedCount: existingIds.size,
-            points: addedPoints.map((item) => ({
-              id: item.id,
-              patrolPointId: item.patrolPointId,
-              code: item.patrolPoint.code,
-              name: item.patrolPoint.name,
-              sequence: item.sequence,
-              required: item.required,
-            })),
-          },
-        });
-
         return {
           message: 'Patrol points added successfully',
           addedCount: newPointIds.length,
@@ -386,27 +352,6 @@ export class PatrolSchedulePointService {
         },
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: adminId,
-        action: 'INSERT_SCHEDULE_POINT',
-        entityType: 'PatrolSchedule',
-        entityId: scheduleId,
-        oldData: {
-          points: oldSequence,
-        },
-        newData: {
-          insertedPoint: {
-            id: created.id,
-            patrolPointId: created.patrolPointId,
-            code: created.patrolPoint.code,
-            name: created.patrolPoint.name,
-            sequence: created.sequence,
-            required: created.required,
-          },
-          points: updatedPoints,
-        },
-      });
-
       return created;
     });
 
@@ -526,29 +471,6 @@ export class PatrolSchedulePointService {
         },
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: adminId,
-        action: 'UPDATE_SCHEDULE_POINT',
-        entityType: 'PatrolSchedulePoint',
-        entityId: id,
-        oldData: {
-          scheduleId: point.scheduleId,
-          patrolPointId: point.patrolPointId,
-          patrolPointCode: point.patrolPoint.code,
-          patrolPointName: point.patrolPoint.name,
-          sequence: point.sequence,
-          required: point.required,
-        },
-        newData: {
-          scheduleId: updated.scheduleId,
-          patrolPointId: updated.patrolPointId,
-          patrolPointCode: updated.patrolPoint.code,
-          patrolPointName: updated.patrolPoint.name,
-          sequence: updated.sequence,
-          required: updated.required,
-        },
-      });
-
       return updated;
     });
   }
@@ -584,21 +506,6 @@ export class PatrolSchedulePointService {
       if (!point) {
         throw new NotFoundException('Schedule point not found');
       }
-
-      await this.auditLogService.createAudit(tx, {
-        userId: adminId,
-        action: 'REMOVE_SCHEDULE_POINT',
-        entityType: 'PatrolSchedulePoint',
-        entityId: id,
-        oldData: {
-          scheduleId: point.scheduleId,
-          patrolPointId: point.patrolPointId,
-          patrolPointCode: point.patrolPoint.code,
-          patrolPointName: point.patrolPoint.name,
-          sequence: point.sequence,
-          required: point.required,
-        },
-      });
 
       await tx.patrolSchedulePoint.delete({
         where: { id },

@@ -230,27 +230,6 @@ export class PatrolRoundService {
           sequence: checkpoint.sequence,
         }));
 
-        await this.auditLogService.createAudit(tx, {
-          userId: adminId,
-          action: 'REORDER_ROUND_CHECKPOINTS',
-          entityType: 'PatrolRound',
-          entityId: roundId,
-          oldData: {
-            status: round.status,
-            routeType: round.routeType,
-            scheduleId: round.assignment.schedule.id,
-            scheduleName: round.assignment.schedule.name,
-            checkpoints: oldOrder,
-          },
-          newData: {
-            status: updated.status,
-            routeType: updated.routeType,
-            scheduleId: round.assignment.schedule.id,
-            scheduleName: round.assignment.schedule.name,
-            checkpoints: newOrder,
-          },
-        });
-
         return {
           message: 'Urutan checkpoint ronde berhasil diperbarui',
           roundId,

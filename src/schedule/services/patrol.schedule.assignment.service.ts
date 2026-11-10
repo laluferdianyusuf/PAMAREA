@@ -112,22 +112,6 @@ export class PatrolScheduleAssignmentService {
         },
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: createdById,
-        action: 'CREATE_ASSIGNMENT',
-        entityType: 'PatrolScheduleAssignment',
-        entityId: created.id,
-        newData: {
-          scheduleId: created.scheduleId,
-          scheduleName: schedule.name,
-          userId: created.userId,
-          userName: created.user.fullName,
-          startDate: this.formatDate(created.startDate),
-          endDate: created.endDate ? this.formatDate(created.endDate) : null,
-          status: created.status,
-        },
-      });
-
       return created;
     });
 
@@ -234,25 +218,6 @@ export class PatrolScheduleAssignmentService {
               endDate,
               status: ScheduleAssignmentStatus.ACTIVE,
               createdById,
-            },
-          });
-
-          await this.auditLogService.createAudit(tx, {
-            userId: createdById,
-            action: 'CREATE_ASSIGNMENT',
-            entityType: 'PatrolScheduleAssignment',
-            entityId: newAssignment.id,
-            newData: {
-              scheduleId: newAssignment.scheduleId,
-              scheduleName: schedule.name,
-              userId: newAssignment.userId,
-              userName: user.fullName,
-              startDate: this.formatDate(newAssignment.startDate),
-              endDate: newAssignment.endDate
-                ? this.formatDate(newAssignment.endDate)
-                : null,
-              status: newAssignment.status,
-              source: 'BULK_ASSIGNMENT',
             },
           });
 
@@ -422,25 +387,6 @@ export class PatrolScheduleAssignmentService {
           'Assignment cannot be deleted because rounds already exist',
         );
       }
-
-      await this.auditLogService.createAudit(tx, {
-        userId: adminId,
-        action: 'DELETE_ASSIGNMENT',
-        entityType: 'PatrolScheduleAssignment',
-        entityId: assignment.id,
-        oldData: {
-          scheduleId: assignment.scheduleId,
-          scheduleName: assignment.schedule.name,
-          userId: assignment.userId,
-          userName: assignment.user.fullName,
-          employeeNumber: assignment.user.employeeNumber,
-          startDate: this.formatDate(assignment.startDate),
-          endDate: assignment.endDate
-            ? this.formatDate(assignment.endDate)
-            : null,
-          status: assignment.status,
-        },
-      });
 
       await tx.patrolScheduleAssignment.delete({
         where: {

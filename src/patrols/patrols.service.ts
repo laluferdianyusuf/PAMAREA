@@ -933,29 +933,6 @@ export class PatrolsService {
           gpsValidationStatus: validationStatus,
         },
       });
-
-      await this.auditLogService.createAudit(tx, {
-        userId,
-        action: 'VALIDATE_PATROL_GPS',
-        entityType: 'Patrol',
-        entityId: patrolId,
-        oldData: {
-          gpsValidationStatus: patrol.gpsValidationStatus,
-          latitude: patrol.latitude,
-          longitude: patrol.longitude,
-          gpsAccuracy: patrol.gpsAccuracy,
-          distanceFromPoint: patrol.distanceFromPoint,
-        },
-        newData: {
-          gpsValidationStatus: updated.gpsValidationStatus,
-          latitude: updated.latitude,
-          longitude: updated.longitude,
-          gpsAccuracy: updated.gpsAccuracy,
-          distanceFromPoint: result.distanceMeters,
-          radiusMeters: result.radiusMeters,
-          accuracyMeters: result.accuracyMeters,
-        },
-      });
     });
 
     if (!result.valid) {
@@ -1104,27 +1081,6 @@ export class PatrolsService {
           newValue: answer.answerValue ?? null,
         });
       }
-
-      await this.auditLogService.createAudit(tx, {
-        userId,
-        action: 'SUBMIT_PATROL_ANSWERS',
-        entityType: 'Patrol',
-        entityId: patrolId,
-        oldData: {
-          answerCount: changes.length,
-          answers: changes.map((item) => ({
-            questionId: item.questionId,
-            answerValue: item.oldValue,
-          })),
-        },
-        newData: {
-          answerCount: changes.length,
-          answers: changes.map((item) => ({
-            questionId: item.questionId,
-            answerValue: item.newValue,
-          })),
-        },
-      });
     });
 
     return this.getPatrol(patrolId, userId);
@@ -1189,23 +1145,6 @@ export class PatrolsService {
           latitude: dto.latitude ?? null,
           longitude: dto.longitude ?? null,
           capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : new Date(),
-        },
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId,
-        action: 'UPLOAD_PATROL_PHOTO',
-        entityType: 'PatrolPhoto',
-        entityId: photo.id,
-        newData: {
-          patrolId,
-          answerId: answer.id,
-          fileName: photo.fileName,
-          mimeType: photo.mimeType,
-          fileSize: photo.fileSize,
-          capturedAt: photo.capturedAt
-            ? new Date(photo.capturedAt.toISOString())
-            : new Date(),
         },
       });
 

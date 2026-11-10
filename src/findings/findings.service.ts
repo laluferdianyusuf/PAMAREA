@@ -460,25 +460,6 @@ export class FindingsService {
         include: this.detailInclude,
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'UPDATE_FINDING',
-        entityType: 'Finding',
-        entityId: id,
-        oldData: {
-          title: finding.title,
-          description: finding.description,
-          severity: finding.severity,
-          status: finding.status,
-        },
-        newData: {
-          title: updated.title,
-          description: updated.description,
-          severity: updated.severity,
-          status: updated.status,
-        },
-      });
-
       return updated;
     });
   }
@@ -503,19 +484,6 @@ export class FindingsService {
           status: FindingStatus.IN_PROGRESS,
         },
         include: this.detailInclude,
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'START_FINDING',
-        entityType: 'Finding',
-        entityId: id,
-        oldData: {
-          status: finding.status,
-        },
-        newData: {
-          status: updated.status,
-        },
       });
 
       return updated;
@@ -566,21 +534,6 @@ export class FindingsService {
               : finding.status,
         },
         include: this.detailInclude,
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'ASSIGN_FINDING',
-        entityType: 'Finding',
-        entityId: id,
-        oldData: {
-          assignedToId: finding.assignedToId,
-          status: finding.status,
-        },
-        newData: {
-          assignedToId: updated.assignedToId,
-          status: updated.status,
-        },
       });
 
       return updated;
@@ -715,20 +668,6 @@ export class FindingsService {
           fileSize: file.size,
         },
       });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'ADD_FINDING_PHOTO',
-        entityType: 'FindingPhoto',
-        entityId: photo.id,
-        newData: {
-          findingId,
-          fileName: photo.fileName,
-          mimeType: photo.mimeType,
-          fileSize: photo.fileSize,
-        },
-      });
-
       return photo;
     });
   }
@@ -749,19 +688,6 @@ export class FindingsService {
       await tx.findingPhoto.delete({
         where: {
           id: photoId,
-        },
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'REMOVE_FINDING_PHOTO',
-        entityType: 'FindingPhoto',
-        entityId: photoId,
-        oldData: {
-          findingId: photo.findingId,
-          fileName: photo.fileName,
-          mimeType: photo.mimeType,
-          fileSize: photo.fileSize,
         },
       });
 

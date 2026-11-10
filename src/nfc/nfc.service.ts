@@ -43,18 +43,6 @@ export class NfcService {
         select: this.detailSelect(),
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: createdById,
-        action: 'CREATE_NFC_TAG',
-        entityType: 'NfcTag',
-        entityId: created.id,
-        newData: {
-          uid: created.uid,
-          label: created.label,
-          status: created.status,
-        },
-      });
-
       return created;
     });
   }
@@ -169,23 +157,6 @@ export class NfcService {
         select: this.detailSelect(),
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'UPDATE_NFC_TAG',
-        entityType: 'NfcTag',
-        entityId: id,
-        oldData: {
-          uid: existing.uid,
-          label: existing.label,
-          status: existing.status,
-        },
-        newData: {
-          uid: updated.uid,
-          label: updated.label,
-          status: updated.status,
-        },
-      });
-
       return updated;
     });
   }
@@ -231,19 +202,6 @@ export class NfcService {
         select: this.detailSelect(),
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'MARK_NFC_DAMAGED',
-        entityType: 'NfcTag',
-        entityId: id,
-        oldData: {
-          status: nfc.status,
-        },
-        newData: {
-          status: updated.status,
-        },
-      });
-
       return updated;
     });
   }
@@ -277,19 +235,6 @@ export class NfcService {
           status: NfcStatus.LOST,
         },
         select: this.detailSelect(),
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'MARK_NFC_LOST',
-        entityType: 'NfcTag',
-        entityId: id,
-        oldData: {
-          status: nfc.status,
-        },
-        newData: {
-          status: updated.status,
-        },
       });
 
       return updated;
@@ -335,19 +280,6 @@ export class NfcService {
         select: this.detailSelect(),
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'ACTIVATE_NFC',
-        entityType: 'NfcTag',
-        entityId: id,
-        oldData: {
-          status: nfc.status,
-        },
-        newData: {
-          status: updated.status,
-        },
-      });
-
       return updated;
     });
   }
@@ -381,19 +313,6 @@ export class NfcService {
           status: NfcStatus.INACTIVE,
         },
         select: this.detailSelect(),
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'DEACTIVATE_NFC',
-        entityType: 'NfcTag',
-        entityId: id,
-        oldData: {
-          status: nfc.status,
-        },
-        newData: {
-          status: updated.status,
-        },
       });
 
       return updated;
@@ -469,41 +388,6 @@ export class NfcService {
         },
       });
 
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'REPLACE_NFC_TAG',
-        entityType: 'NfcTag',
-        entityId: oldNfc.id,
-        oldData: {
-          uid: oldNfc.uid,
-          label: oldNfc.label,
-          status: oldNfc.status,
-        },
-        newData: {
-          replacedByNfcId: updatedNewNfc.id,
-          replacedByUid: updatedNewNfc.uid,
-          status: replacedOldNfc.status,
-        },
-      });
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'RECEIVE_REPLACEMENT_NFC_TAG',
-        entityType: 'NfcTag',
-        entityId: updatedNewNfc.id,
-        oldData: {
-          uid: newNfc.uid,
-          label: newNfc.label,
-          status: newNfc.status,
-        },
-        newData: {
-          uid: updatedNewNfc.uid,
-          label: updatedNewNfc.label,
-          status: updatedNewNfc.status,
-          replacesNfcId: replacedOldNfc.id,
-        },
-      });
-
       return {
         oldNfcId: replacedOldNfc.id,
         newNfc: updatedNewNfc,
@@ -556,19 +440,6 @@ export class NfcService {
           'NFC tidak dapat dihapus karena masih memiliki riwayat patroli.',
         );
       }
-
-      await this.auditLogService.createAudit(tx, {
-        userId: actorId,
-        action: 'DELETE_NFC_TAG',
-        entityType: 'NfcTag',
-        entityId: id,
-        oldData: {
-          uid: nfc.uid,
-          label: nfc.label,
-          status: nfc.status,
-          deletedAssignments: nfc._count.assignments,
-        },
-      });
 
       // Hapus riwayat assignment hanya untuk LOST dan REPLACED.
       if (canDeleteHistory && nfc._count.assignments > 0) {
