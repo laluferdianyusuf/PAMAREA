@@ -605,7 +605,7 @@ export class PatrolRoundService {
 
       orderBy: [
         {
-          scheduledStartAt: 'desc',
+          scheduledStartAt: 'asc',
         },
         {
           roundNumber: 'asc',
