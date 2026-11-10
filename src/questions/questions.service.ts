@@ -263,48 +263,175 @@ export class QuestionsService {
   }
 
   async update(id: string, dto: UpdateQuestionDto) {
-    const question = await this.prisma.question.findUnique({
-      where: {
-        id,
+    const currentQuestion = await this.prisma.question.findUnique({
+      where: { id },
+      include: {
+        options: true,
       },
     });
 
-    if (!question) {
+    if (!currentQuestion) {
       throw new NotFoundException('Question tidak ditemukan');
     }
 
-    return this.prisma.question.update({
-      where: {
-        id,
-      },
+    const nextType = dto.questionType ?? currentQuestion.questionType;
 
-      data: {
-        ...(dto.questionText !== undefined
-          ? {
-              questionText: dto.questionText.trim(),
-            }
-          : {}),
+    const typeChanged = nextType !== currentQuestion.questionType;
+    const optionsChanged = dto.questionOptions !== undefined;
+    const configurationChanged = typeChanged || optionsChanged;
 
-        ...(dto.isRequired !== undefined
-          ? {
-              isRequired: dto.isRequired,
-            }
-          : {}),
+    let optionsToCreate: {
+      value: string;
+      label: string;
+      sortOrder: number;
+      isSafe: boolean;
+    }[] = [];
 
-        ...(dto.photoRequirement !== undefined
-          ? {
-              photoRequirement: dto.photoRequirement,
-            }
-          : {}),
+    if (nextType === QuestionType.YES_NO) {
+      if (optionsChanged && dto.questionOptions?.length) {
+        throw new BadRequestException(
+          'Question YES_NO menggunakan pilihan Ya/Tidak otomatis',
+        );
+      }
 
-        ...(dto.status !== undefined
-          ? {
-              status: dto.status,
-            }
-          : {}),
-      },
+      if (typeChanged) {
+        optionsToCreate = [
+          {
+            value: 'YES',
+            label: 'Ya',
+            sortOrder: 1,
+            isSafe: true,
+          },
+          {
+            value: 'NO',
+            label: 'Tidak',
+            sortOrder: 2,
+            isSafe: false,
+          },
+        ];
+      }
+    }
 
-      include: this.questionInclude(),
+    if (nextType === QuestionType.SINGLE_CHOICE) {
+      if (optionsChanged) {
+        if (!dto.questionOptions?.length) {
+          throw new BadRequestException(
+            'Question options wajib diisi untuk SINGLE_CHOICE',
+          );
+        }
+
+        const normalizedOptions = dto.questionOptions.map((option) => ({
+          label: option.label.trim(),
+          isSafe: option.isSafe ?? false,
+        }));
+
+        if (normalizedOptions.some((option) => !option.label)) {
+          throw new BadRequestException('Question options tidak boleh kosong');
+        }
+
+        const uniqueLabels = normalizedOptions.map((option) =>
+          option.label.toLowerCase(),
+        );
+
+        if (new Set(uniqueLabels).size !== uniqueLabels.length) {
+          throw new BadRequestException(
+            'Question options tidak boleh duplikat',
+          );
+        }
+
+        optionsToCreate = normalizedOptions.map((option, index) => ({
+          value: option.label.toUpperCase(),
+          label: option.label,
+          sortOrder: index + 1,
+          isSafe: option.isSafe,
+        }));
+      } else if (typeChanged) {
+        throw new BadRequestException(
+          'Question options wajib diisi ketika mengubah tipe menjadi SINGLE_CHOICE',
+        );
+      }
+    }
+
+    if (nextType === QuestionType.TEXT) {
+      if (dto.questionOptions?.length) {
+        throw new BadRequestException(
+          'Question type TEXT tidak membutuhkan options',
+        );
+      }
+    }
+
+    // Lindungi jawaban patroli yang sudah tersimpan.
+    if (configurationChanged) {
+      const answerCount = await this.prisma.patrolAnswer.count({
+        where: {
+          questionId: id,
+        },
+      });
+
+      if (answerCount > 0) {
+        throw new ConflictException(
+          'Tipe atau pilihan question tidak dapat diubah karena sudah digunakan dalam patroli. Buat question baru untuk perubahan tersebut.',
+        );
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (configurationChanged) {
+        await tx.questionOption.deleteMany({
+          where: {
+            questionId: id,
+          },
+        });
+
+        if (optionsToCreate.length > 0) {
+          await tx.questionOption.createMany({
+            data: optionsToCreate.map((option) => ({
+              questionId: id,
+              ...option,
+            })),
+          });
+        }
+      }
+
+      return tx.question.update({
+        where: {
+          id,
+        },
+
+        data: {
+          ...(dto.questionText !== undefined
+            ? {
+                questionText: dto.questionText.trim(),
+              }
+            : {}),
+
+          ...(dto.questionType !== undefined
+            ? {
+                questionType: dto.questionType,
+              }
+            : {}),
+
+          ...(dto.isRequired !== undefined
+            ? {
+                isRequired: dto.isRequired,
+              }
+            : {}),
+
+          ...(dto.photoRequirement !== undefined
+            ? {
+                photoRequirement: dto.photoRequirement,
+              }
+            : {}),
+
+          ...(dto.status !== undefined
+            ? {
+                status: dto.status,
+              }
+            : {}),
+        },
+
+        include: this.questionInclude(),
+      });
     });
   }
 

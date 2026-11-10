@@ -612,10 +612,6 @@ export class PatrolHistoryExportService {
     return status ? (labels[status] ?? status) : '-';
   }
 
-  // ============================================================
-  // SHEET 1: RIWAYAT PATROLI
-  // ============================================================
-
   private buildHistorySheet(
     worksheet: ExcelJS.Worksheet,
     patrols: any[],
@@ -644,9 +640,6 @@ export class PatrolHistoryExportService {
       { header: 'Status Patroli', key: 'status', width: 18 },
     ];
 
-    // Jangan menambahkan worksheet.addRow({}) di sini.
-    // Baris 1-3 digunakan untuk judul dan subtitle.
-    // Header berada di baris 4, data mulai baris 5.
     this.styleWorksheet(worksheet, 'LAPORAN RIWAYAT PATROLI', subtitle);
 
     patrols.forEach((patrol, index) => {
@@ -676,8 +669,6 @@ export class PatrolHistoryExportService {
 
     this.styleDataRows(worksheet);
 
-    // Styling berdasarkan array patrols, bukan rowCount.
-    // Mencegah akses patrols[index] di luar batas array.
     for (let index = 0; index < patrols.length; index++) {
       const rowNumber = index + 5;
       const patrol = patrols[index];
@@ -707,10 +698,6 @@ export class PatrolHistoryExportService {
       this.styleStatus(worksheet.getCell(rowNumber, 20), patrol.status);
     }
   }
-
-  // ============================================================
-  // SHEET 2: JAWABAN PATROLI
-  // ============================================================
 
   private buildAnswerSheet(
     worksheet: ExcelJS.Worksheet,
@@ -759,7 +746,6 @@ export class PatrolHistoryExportService {
 
     worksheet.columns = columns;
 
-    // Jangan menambahkan worksheet.addRow({}) di sini.
     this.styleWorksheet(worksheet, 'LAPORAN JAWABAN PATROLI', subtitle);
 
     const tasks: PhotoTask[] = [];
@@ -807,10 +793,6 @@ export class PatrolHistoryExportService {
 
     return tasks;
   }
-
-  // ============================================================
-  // SHEET 3: TEMUAN PATROLI
-  // ============================================================
 
   private buildFindingSheet(
     worksheet: ExcelJS.Worksheet,

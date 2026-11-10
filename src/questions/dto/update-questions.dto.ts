@@ -1,30 +1,51 @@
+import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
-  MaxLength,
+  ValidateNested,
 } from 'class-validator';
 import {
   PhotoRequirement,
   QuestionStatus,
-} from '../../generated/prisma/enums.js';
+  QuestionType,
+} from '../../generated/prisma/client.js';
+
+class UpdateQuestionOptionItemDto {
+  @IsString()
+  label: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isSafe?: boolean;
+}
 
 export class UpdateQuestionDto {
-  @IsString()
   @IsOptional()
-  @MaxLength(1000)
+  @IsString()
   questionText?: string;
 
-  @IsBoolean()
   @IsOptional()
+  @IsEnum(QuestionType)
+  questionType?: QuestionType;
+
+  @IsOptional()
+  @IsBoolean()
   isRequired?: boolean;
 
-  @IsEnum(PhotoRequirement)
   @IsOptional()
+  @IsEnum(PhotoRequirement)
   photoRequirement?: PhotoRequirement;
 
-  @IsEnum(QuestionStatus)
   @IsOptional()
+  @IsEnum(QuestionStatus)
   status?: QuestionStatus;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => UpdateQuestionOptionItemDto)
+  questionOptions?: UpdateQuestionOptionItemDto[];
 }
