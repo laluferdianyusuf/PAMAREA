@@ -361,19 +361,19 @@ export class QuestionsService {
     }
 
     // Lindungi jawaban patroli yang sudah tersimpan.
-    if (configurationChanged) {
-      const answerCount = await this.prisma.patrolAnswer.count({
-        where: {
-          questionId: id,
-        },
-      });
+    // if (configurationChanged) {
+    //   const answerCount = await this.prisma.patrolAnswer.count({
+    //     where: {
+    //       questionId: id,
+    //     },
+    //   });
 
-      if (answerCount > 0) {
-        throw new ConflictException(
-          'Tipe atau pilihan question tidak dapat diubah karena sudah digunakan dalam patroli. Buat question baru untuk perubahan tersebut.',
-        );
-      }
-    }
+    //   if (answerCount > 0) {
+    //     throw new ConflictException(
+    //       'Tipe atau pilihan question tidak dapat diubah karena sudah digunakan dalam patroli. Buat question baru untuk perubahan tersebut.',
+    //     );
+    //   }
+    // }
 
     return this.prisma.$transaction(async (tx) => {
       if (configurationChanged) {
