@@ -211,7 +211,11 @@ export class EmergencyService {
     const targetGuards = await this.prisma.user.findMany({
       where: {
         siteId: data.siteId,
-        role: { name: 'SECURITY' },
+        role: {
+          name: {
+            in: ['ADMIN', 'SECURITY', 'CHIEF_SECURITY', 'DANRU_SECURITY'],
+          },
+        },
         status: 'ACTIVE',
       },
       select: {
