@@ -24,6 +24,96 @@ import { ValidateLocationDto } from './dto/validate-location.dto.js';
 import { GpsValidationService } from './services/gps-validation.service.js';
 import { NfcValidationService } from './services/nfc-validation.service.js';
 
+type AnswerEvaluation = {
+  isSafe: boolean | null;
+  status: 'SAFE' | 'UNSAFE' | 'UNKNOWN';
+  reason: string | null;
+};
+
+type QuestionEvaluationData = {
+  questionType: string;
+  options?: {
+    value: string;
+    label: string;
+    isSafe: boolean;
+  }[];
+};
+
+function evaluatePatrolAnswer(
+  answer: {
+    answerValue: string | null;
+  },
+  question: QuestionEvaluationData | null | undefined,
+): AnswerEvaluation {
+  const unknownResult: AnswerEvaluation = {
+    isSafe: null,
+    status: 'UNKNOWN',
+    reason: 'Data evaluasi pertanyaan tidak tersedia',
+  };
+
+  if (!question) {
+    return unknownResult;
+  }
+
+  const questionType = question.questionType.toUpperCase();
+
+  const answerValue = String(answer.answerValue ?? '')
+    .trim()
+    .toUpperCase();
+
+  if (!answerValue) {
+    return unknownResult;
+  }
+
+  if (questionType === 'YES_NO') {
+    if (['YES', 'YA'].includes(answerValue)) {
+      return {
+        isSafe: true,
+        status: 'SAFE',
+        reason: null,
+      };
+    }
+
+    if (['NO', 'TIDAK'].includes(answerValue)) {
+      return {
+        isSafe: false,
+        status: 'UNSAFE',
+        reason: 'Petugas menjawab Tidak',
+      };
+    }
+
+    return unknownResult;
+  }
+
+  if (questionType === 'SINGLE_CHOICE') {
+    const options = question.options ?? [];
+
+    const selectedOption = options.find(
+      (option) => option.value.trim().toUpperCase() === answerValue,
+    );
+
+    if (!selectedOption) {
+      return unknownResult;
+    }
+
+    if (selectedOption.isSafe) {
+      return {
+        isSafe: true,
+        status: 'SAFE',
+        reason: null,
+      };
+    }
+
+    return {
+      isSafe: false,
+      status: 'UNSAFE',
+      reason: 'Pilihan jawaban ditandai tidak aman',
+    };
+  }
+
+  return unknownResult;
+}
+
 @Injectable()
 export class PatrolsService {
   constructor(
@@ -46,14 +136,15 @@ export class PatrolsService {
     const page = Math.max(1, Math.floor(params?.page ?? 1));
     const limit = Math.min(100, Math.max(1, Math.floor(params?.limit ?? 20)));
     const skip = (page - 1) * limit;
-
     const search = params?.search?.trim();
 
     const where = {
       status: PatrolStatus.SUBMITTED,
+
       ...(params?.status && {
         status: params.status,
       }),
+
       ...(params?.startDate || params?.endDate
         ? {
             startedAt: {
@@ -66,6 +157,7 @@ export class PatrolsService {
             },
           }
         : {}),
+
       ...(search
         ? {
             OR: [
@@ -113,13 +205,11 @@ export class PatrolsService {
           startedAt: true,
           completedAt: true,
           status: true,
-
           latitude: true,
           longitude: true,
           gpsAccuracy: true,
           distanceFromPoint: true,
           gpsValidationStatus: true,
-
           nfcUidSnapshot: true,
           nfcValidationStatus: true,
           nfcBypass: true,
@@ -170,6 +260,19 @@ export class PatrolsService {
               questionTextSnapshot: true,
               answerValue: true,
               answerLabelSnapshot: true,
+
+              question: {
+                select: {
+                  questionType: true,
+                  options: {
+                    select: {
+                      value: true,
+                      label: true,
+                      isSafe: true,
+                    },
+                  },
+                },
+              },
 
               photos: {
                 select: {
@@ -274,7 +377,43 @@ export class PatrolsService {
       this.prisma.patrol.count({ where }),
     ]);
 
-    type PatrolItem = (typeof patrols)[number];
+    const evaluatedPatrols = patrols.map((patrol) => {
+      const answers = patrol.answers.map((answer) => {
+        const evaluation = evaluatePatrolAnswer(
+          {
+            answerValue: answer.answerValue,
+          },
+          answer.question,
+        );
+
+        const { question, ...answerData } = answer;
+
+        return {
+          ...answerData,
+          evaluation,
+        };
+      });
+
+      const answerSummary = {
+        total: answers.length,
+        safe: answers.filter((answer) => answer.evaluation.status === 'SAFE')
+          .length,
+        unsafe: answers.filter(
+          (answer) => answer.evaluation.status === 'UNSAFE',
+        ).length,
+        unknown: answers.filter(
+          (answer) => answer.evaluation.status === 'UNKNOWN',
+        ).length,
+      };
+
+      return {
+        ...patrol,
+        answers,
+        answerSummary,
+      };
+    });
+
+    type PatrolItem = (typeof evaluatedPatrols)[number];
 
     const grouped = new Map<
       string,
@@ -284,7 +423,7 @@ export class PatrolsService {
       }
     >();
 
-    for (const patrol of patrols) {
+    for (const patrol of evaluatedPatrols) {
       const { user, ...patrolData } = patrol;
 
       if (!grouped.has(user.id)) {
@@ -651,7 +790,7 @@ export class PatrolsService {
 
     const deviceId = device.id;
 
-    for (const { assignment, round } of rounds) {
+    for (const { round } of rounds) {
       const checkpoint = await this.prisma.patrolCheckpoint.findFirst({
         where: {
           roundId: round.id,
@@ -787,7 +926,9 @@ export class PatrolsService {
 
   async bypassNfc(patrolId: string, userId: string, dto: BypassNfcDto) {
     const patrol = await this.prisma.patrol.findUnique({
-      where: { id: patrolId },
+      where: {
+        id: patrolId,
+      },
     });
 
     if (!patrol) {
@@ -834,7 +975,9 @@ export class PatrolsService {
 
     const updated = await this.prisma.$transaction(async (tx) => {
       const result = await tx.patrol.update({
-        where: { id: patrolId },
+        where: {
+          id: patrolId,
+        },
         data: {
           nfcValidationStatus: NfcValidationStatus.BYPASSED,
           nfcBypass: true,
@@ -882,8 +1025,12 @@ export class PatrolsService {
     dto: ValidateLocationDto,
   ) {
     const patrol = await this.prisma.patrol.findUnique({
-      where: { id: patrolId },
-      include: { patrolPoint: true },
+      where: {
+        id: patrolId,
+      },
+      include: {
+        patrolPoint: true,
+      },
     });
 
     if (!patrol) {
@@ -923,8 +1070,10 @@ export class PatrolsService {
       : GpsValidationStatus.INVALID;
 
     await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.patrol.update({
-        where: { id: patrolId },
+      await tx.patrol.update({
+        where: {
+          id: patrolId,
+        },
         data: {
           latitude: dto.latitude,
           longitude: dto.longitude,
@@ -982,18 +1131,20 @@ export class PatrolsService {
   async submitAnswers(patrolId: string, userId: string, dto: SubmitAnswersDto) {
     const patrol = await this.getPatrolForMutation(patrolId, userId);
 
-    // this.ensureValidationComplete(patrol);
-
     const pointQuestions = await this.prisma.pointQuestion.findMany({
       where: {
         patrolPointId: patrol.patrolPointId,
       },
       include: {
         question: {
-          include: { options: true },
+          include: {
+            options: true,
+          },
         },
       },
-      orderBy: { sortOrder: 'asc' },
+      orderBy: {
+        sortOrder: 'asc',
+      },
     });
 
     const questionMap = new Map(
@@ -1037,23 +1188,8 @@ export class PatrolsService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      const changes: {
-        questionId: string;
-        oldValue: string | null;
-        newValue: string | null;
-      }[] = [];
-
       for (const answer of dto.answers) {
         const pointQuestion = questionMap.get(answer.questionId)!;
-
-        const existing = await tx.patrolAnswer.findUnique({
-          where: {
-            patrolId_questionId: {
-              patrolId,
-              questionId: answer.questionId,
-            },
-          },
-        });
 
         await tx.patrolAnswer.upsert({
           where: {
@@ -1074,12 +1210,6 @@ export class PatrolsService {
             answerLabelSnapshot: answer.answerLabel ?? null,
           },
         });
-
-        changes.push({
-          questionId: answer.questionId,
-          oldValue: existing?.answerValue ?? null,
-          newValue: answer.answerValue ?? null,
-        });
       }
     });
 
@@ -1093,8 +1223,6 @@ export class PatrolsService {
     file: UploadedFile,
   ) {
     const patrol = await this.getPatrolForMutation(patrolId, userId);
-
-    // this.ensureValidationComplete(patrol);
 
     if (!file) {
       throw new BadRequestException({
@@ -1134,7 +1262,7 @@ export class PatrolsService {
     const uploadedFile = await this.storageService.saveImage(file);
 
     return this.prisma.$transaction(async (tx) => {
-      const photo = await tx.patrolPhoto.create({
+      return tx.patrolPhoto.create({
         data: {
           patrolId,
           answerId: answer.id,
@@ -1147,22 +1275,20 @@ export class PatrolsService {
           capturedAt: dto.capturedAt ? new Date(dto.capturedAt) : new Date(),
         },
       });
-
-      return photo;
     });
   }
 
   async submitPatrol(patrolId: string, userId: string) {
     const patrol = await this.getPatrolForMutation(patrolId, userId);
 
-    // this.ensureValidationComplete(patrol);
-
     await this.validateRequiredAnswers(patrolId, patrol.patrolPointId);
     await this.validateRequiredPhotos(patrolId, patrol.patrolPointId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const updatedPatrol = await tx.patrol.update({
-        where: { id: patrolId },
+        where: {
+          id: patrolId,
+        },
         data: {
           status: PatrolStatus.SUBMITTED,
           completedAt: new Date(),
@@ -1173,14 +1299,20 @@ export class PatrolsService {
 
       if (patrol.checkpointId) {
         const checkpoint = await tx.patrolCheckpoint.findUnique({
-          where: { id: patrol.checkpointId },
-          select: { status: true },
+          where: {
+            id: patrol.checkpointId,
+          },
+          select: {
+            status: true,
+          },
         });
 
         oldCheckpointStatus = checkpoint?.status ?? null;
 
         await tx.patrolCheckpoint.update({
-          where: { id: patrol.checkpointId },
+          where: {
+            id: patrol.checkpointId,
+          },
           data: {
             status: PatrolCheckpointStatus.COMPLETED,
             visitedAt: new Date(),
@@ -1266,7 +1398,16 @@ export class PatrolsService {
           startDate: {
             lte: yesterday,
           },
-          OR: [{ endDate: null }, { endDate: { gte: yesterday } }],
+          OR: [
+            {
+              endDate: null,
+            },
+            {
+              endDate: {
+                gte: yesterday,
+              },
+            },
+          ],
           rounds: {
             some: {
               scheduleDate: {
@@ -1377,10 +1518,14 @@ export class PatrolsService {
     });
 
     const answers = await this.prisma.patrolAnswer.findMany({
-      where: { patrolId },
+      where: {
+        patrolId,
+      },
       include: {
         photos: {
-          select: { id: true },
+          select: {
+            id: true,
+          },
         },
       },
     });
@@ -1434,10 +1579,14 @@ export class PatrolsService {
 
   private async updateRoundStatus(roundId: string): Promise<void> {
     const round = await this.prisma.patrolRound.findUnique({
-      where: { id: roundId },
+      where: {
+        id: roundId,
+      },
       include: {
         checkpoints: {
-          orderBy: { sequence: 'asc' },
+          orderBy: {
+            sequence: 'asc',
+          },
         },
       },
     });
@@ -1469,10 +1618,16 @@ export class PatrolsService {
     }
 
     await this.prisma.patrolRound.update({
-      where: { id: roundId },
+      where: {
+        id: roundId,
+      },
       data: {
         status,
-        ...(allRequiredCompleted ? { completedAt: new Date() } : {}),
+        ...(allRequiredCompleted
+          ? {
+              completedAt: new Date(),
+            }
+          : {}),
       },
     });
   }
@@ -1573,7 +1728,6 @@ export class PatrolsService {
       parts.map((part) => [part.type, part.value]),
     );
 
-    // Representasi tanggal kalender WIB pada tengah malam UTC.
     return new Date(
       `${values.year}-${values.month}-${values.day}T00:00:00.000Z`,
     );
@@ -1581,42 +1735,44 @@ export class PatrolsService {
 
   private async findUnsafeAnswers(patrolId: string) {
     const answers = await this.prisma.patrolAnswer.findMany({
-      where: { patrolId },
+      where: {
+        patrolId,
+      },
       include: {
         question: {
-          include: { options: true },
+          select: {
+            questionType: true,
+            options: {
+              select: {
+                value: true,
+                label: true,
+                isSafe: true,
+              },
+            },
+          },
         },
       },
     });
 
     return answers.flatMap((answer) => {
-      const value = answer.answerValue?.trim();
+      const evaluation = evaluatePatrolAnswer(
+        {
+          answerValue: answer.answerValue,
+        },
+        answer.question,
+      );
 
-      if (answer.question.questionType === 'YES_NO' && value === 'NO') {
-        return [
-          {
-            question: answer.questionTextSnapshot,
-            answer: answer.answerLabelSnapshot ?? value,
-          },
-        ];
+      if (evaluation.status !== 'UNSAFE') {
+        return [];
       }
 
-      if (answer.question.questionType === 'SINGLE_CHOICE') {
-        const option = answer.question.options.find(
-          (item) => item.value === value,
-        );
-
-        if (option && !option.isSafe) {
-          return [
-            {
-              question: answer.questionTextSnapshot,
-              answer: answer.answerLabelSnapshot ?? option.label,
-            },
-          ];
-        }
-      }
-
-      return [];
+      return [
+        {
+          question: answer.questionTextSnapshot,
+          answer: answer.answerLabelSnapshot ?? answer.answerValue ?? '-',
+          reason: evaluation.reason,
+        },
+      ];
     });
   }
 }
