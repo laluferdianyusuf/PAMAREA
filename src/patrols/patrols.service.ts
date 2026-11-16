@@ -1221,6 +1221,7 @@ export class PatrolsService {
     if (unsafeAnswers.length > 0) {
       try {
         await this.emergencyService.broadcastPatrolWarning(userId, {
+          patrolId,
           siteId: patrol.siteId,
           reportNumber: result.reportNumber,
           patrolPointName: patrol.patrolPoint.name,

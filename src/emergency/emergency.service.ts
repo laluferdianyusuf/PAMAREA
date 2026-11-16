@@ -186,6 +186,7 @@ export class EmergencyService {
   async broadcastPatrolWarning(
     senderId: string,
     data: {
+      patrolId: string;
       siteId: string;
       reportNumber: string;
       patrolPointName: string;
@@ -208,6 +209,19 @@ export class EmergencyService {
       );
     }
 
+    if (!data.patrolId) {
+      throw new InternalServerErrorException('Patrol ID tidak ditemukan');
+    }
+
+    if (data.unsafeAnswers.length === 0) {
+      return {
+        status: 'NO_UNSAFE_ANSWERS',
+        totalDevices: 0,
+        successCount: 0,
+        failureCount: 0,
+      };
+    }
+
     const targetGuards = await this.prisma.user.findMany({
       where: {
         siteId: data.siteId,
@@ -220,7 +234,9 @@ export class EmergencyService {
       },
       select: {
         devices: {
-          where: { status: 'ACTIVE' },
+          where: {
+            status: 'ACTIVE',
+          },
           select: {
             deviceIdentifier: true,
           },
@@ -239,20 +255,6 @@ export class EmergencyService {
     ];
 
     if (tokens.length === 0) {
-      await this.writeAuditLog({
-        userId: senderId,
-        action: 'BROADCAST_PATROL_WARNING',
-        entityType: 'PATROL_WARNING',
-        newData: {
-          siteId: data.siteId,
-          reportNumber: data.reportNumber,
-          patrolPointName: data.patrolPointName,
-          unsafeCount: data.unsafeAnswers.length,
-          status: 'NO_ACTIVE_DEVICES',
-          totalDevices: 0,
-        },
-      });
-
       return {
         status: 'NO_ACTIVE_DEVICES',
         totalDevices: 0,
@@ -268,12 +270,26 @@ export class EmergencyService {
       )
       .join('\n');
 
+    const webAdminBaseUrl = process.env.WEB_ADMIN_URL;
+
+    if (!webAdminBaseUrl) {
+      throw new InternalServerErrorException(
+        'WEB_ADMIN_URL belum dikonfigurasi',
+      );
+    }
+
+    const webAdminUrl =
+      `${webAdminBaseUrl.replace(/\/+$/, '')}` +
+      `/patrol-warnings/${encodeURIComponent(data.patrolId)}`;
+
     const payload: MulticastMessage = {
-      tokens: [],
+      tokens,
+
       notification: {
         title: 'Peringatan Hasil Patroli',
-        body: `${data.unsafeAnswers.length} jawaban perlu diperiksa di titik ${data.patrolPointName}.`,
+        body: `${data.unsafeAnswers.length} jawaban tidak sesuai ditemukan di titik ${data.patrolPointName}.`,
       },
+
       android: {
         priority: 'high',
         notification: {
@@ -281,15 +297,18 @@ export class EmergencyService {
           sound: 'default',
         },
       },
+
       data: {
         type: 'PATROL_WARNING',
-        senderName: sender.fullName,
-        siteId: data.siteId,
-        reportNumber: data.reportNumber,
-        patrolPointName: data.patrolPointName,
+        patrolId: String(data.patrolId),
+        senderName: String(sender.fullName),
+        siteId: String(data.siteId),
+        reportNumber: String(data.reportNumber),
+        patrolPointName: String(data.patrolPointName),
         unsafeCount: String(data.unsafeAnswers.length),
         unsafeAnswers: JSON.stringify(data.unsafeAnswers),
         summary: unsafeSummary,
+        url: webAdminUrl,
         timestamp: new Date().toISOString(),
       },
     };
@@ -338,25 +357,9 @@ export class EmergencyService {
 
       const status = this.getBroadcastStatus(successCount, failureCount);
 
-      await this.writeAuditLog({
-        userId: senderId,
-        action: 'BROADCAST_PATROL_WARNING',
-        entityType: 'PATROL_WARNING',
-        newData: {
-          siteId: data.siteId,
-          reportNumber: data.reportNumber,
-          patrolPointName: data.patrolPointName,
-          unsafeCount: data.unsafeAnswers.length,
-          totalDevices: tokens.length,
-          successCount,
-          failureCount,
-          status,
-          timestamp: new Date().toISOString(),
-        },
-      });
-
       return {
         status,
+        patrolId: data.patrolId,
         totalDevices: tokens.length,
         successCount,
         failureCount,
@@ -367,6 +370,7 @@ export class EmergencyService {
         action: 'BROADCAST_PATROL_WARNING',
         entityType: 'PATROL_WARNING',
         newData: {
+          patrolId: data.patrolId,
           siteId: data.siteId,
           reportNumber: data.reportNumber,
           patrolPointName: data.patrolPointName,
