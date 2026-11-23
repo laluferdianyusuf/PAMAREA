@@ -6,7 +6,6 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
-
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -25,6 +24,8 @@ import { RefreshTokenPayload } from './interfaces/refresh-token.interface.js';
 
 @Injectable()
 export class AuthService {
+  private readonly sessionExpirationDate = new Date('9999-12-31T23:59:59.999Z');
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -272,7 +273,6 @@ export class AuthService {
     const sessionId = randomUUID();
     const tokens = await this.generateTokens(user.id, sessionId);
     const refreshTokenHash = await bcrypt.hash(tokens.refreshToken, 12);
-    const refreshExpiresIn = 30 * 24 * 60 * 60 * 1000;
     const loginAt = new Date();
 
     await this.prisma.$transaction(async (tx) => {
@@ -281,7 +281,7 @@ export class AuthService {
           id: sessionId,
           userId: user.id,
           refreshTokenHash,
-          expiresAt: new Date(Date.now() + refreshExpiresIn),
+          expiresAt: this.sessionExpirationDate,
         },
       });
 
@@ -315,7 +315,7 @@ export class AuthService {
       data: {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        expiresIn: 900,
+        expiresIn: null,
         user: this.sanitizeUser(user),
       },
     };
@@ -383,7 +383,7 @@ export class AuthService {
       throw new UnauthorizedException('Session sudah logout');
     }
 
-    if (session.expiresAt <= new Date()) {
+    if (session.expiresAt && session.expiresAt <= new Date()) {
       throw new UnauthorizedException('Session sudah expired');
     }
 
@@ -405,7 +405,6 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user.id, session.id);
     const newRefreshTokenHash = await bcrypt.hash(tokens.refreshToken, 12);
-    const refreshedAt = new Date();
 
     await this.prisma.$transaction(async (tx) => {
       await tx.session.update({
@@ -414,7 +413,7 @@ export class AuthService {
         },
         data: {
           refreshTokenHash: newRefreshTokenHash,
-          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          expiresAt: this.sessionExpirationDate,
         },
       });
     });
@@ -424,7 +423,7 @@ export class AuthService {
       data: {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        expiresIn: 900,
+        expiresIn: null,
       },
     };
   }
@@ -466,25 +465,13 @@ export class AuthService {
 
   async logoutAll(userId: string) {
     return this.prisma.$transaction(async (tx) => {
-      const activeSessions = await tx.session.findMany({
-        where: {
-          userId,
-          revokedAt: null,
-        },
-        select: {
-          id: true,
-        },
-      });
-
-      const revokedAt = new Date();
-
       const result = await tx.session.updateMany({
         where: {
           userId,
           revokedAt: null,
         },
         data: {
-          revokedAt,
+          revokedAt: new Date(),
         },
       });
 
@@ -621,7 +608,6 @@ export class AuthService {
       },
       {
         secret: this.configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
-        expiresIn: '15m',
       },
     );
 
@@ -633,7 +619,6 @@ export class AuthService {
       },
       {
         secret: this.configService.getOrThrow<string>('JWT_REFRESH_SECRET'),
-        expiresIn: '30d',
       },
     );
 
