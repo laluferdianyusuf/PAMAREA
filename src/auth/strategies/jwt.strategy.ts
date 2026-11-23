@@ -59,7 +59,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('Session sudah logout');
     }
 
-    if (session.expiresAt < new Date()) {
+    if (session.expiresAt && session.expiresAt < new Date()) {
       throw new UnauthorizedException('Session sudah expired');
     }
 
