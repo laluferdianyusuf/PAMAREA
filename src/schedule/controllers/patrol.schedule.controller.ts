@@ -6,8 +6,10 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   UploadedFile,
@@ -25,6 +27,7 @@ import { RoleName } from '../../generated/prisma/enums.js';
 import { AddAssignmentDto } from '../dto/add.assignment.dto.js';
 import { CreatePatrolScheduleDto } from '../dto/create.schedule.dto.js';
 import { ExtendDatesDto } from '../dto/entend.dates.dto.js';
+import { ReorderScheduleRouteDto } from '../dto/reorder-schedule-route.dto.js';
 import { ScheduleFilterDto } from '../dto/schedule.filter.dto.js';
 import { UpdateAssignmentDto } from '../dto/update.assignment.dto.js';
 import { UpdatePatrolScheduleDto } from '../dto/update.schedule.dto.js';
@@ -65,6 +68,11 @@ export class PatrolScheduleController {
     return this.service.findAll(query);
   }
 
+  @Get(':id/route')
+  getRoute(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.getRoute(id);
+  }
+
   @Get(':id')
   @Roles(RoleName.ADMIN)
   findOne(@Param('id') id: string) {
@@ -103,6 +111,15 @@ export class PatrolScheduleController {
     });
 
     res.end(buffer);
+  }
+
+  @Put(':id/route')
+  reorderScheduleRoute(
+    @Param('id') scheduleId: string,
+    @Body() dto: ReorderScheduleRouteDto,
+    @CurrentUser() user: User,
+  ) {
+    return this.service.reorderScheduleRoute(scheduleId, dto, user.id);
   }
 
   /**

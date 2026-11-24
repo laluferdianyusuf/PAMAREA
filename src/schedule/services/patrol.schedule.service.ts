@@ -17,6 +17,7 @@ import {
 } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../prisma/prisma.service.js';
 import { CreatePatrolScheduleDto } from '../dto/create.schedule.dto.js';
+import { ReorderScheduleRouteDto } from '../dto/reorder-schedule-route.dto.js';
 import { ScheduleFilterDto } from '../dto/schedule.filter.dto.js';
 import { UpdatePatrolScheduleDto } from '../dto/update.schedule.dto.js';
 import { PatrolSchedulePolicy } from '../policies/patrol.schedule.policy.service.js';
@@ -383,6 +384,11 @@ export class PatrolScheduleService {
               name: true,
             },
           },
+          points: {
+            select: {
+              patrolPoint: true,
+            },
+          },
           _count: {
             select: {
               points: {
@@ -410,6 +416,60 @@ export class PatrolScheduleService {
         total,
         totalPages: Math.ceil(total / limit),
       },
+    };
+  }
+
+  async getRoute(scheduleId: string) {
+    const schedule = await this.prisma.patrolSchedule.findUnique({
+      where: {
+        id: scheduleId,
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        enforceSequence: true,
+        points: {
+          orderBy: {
+            sequence: 'asc',
+          },
+          select: {
+            id: true,
+            patrolPointId: true,
+            sequence: true,
+            required: true,
+            patrolPoint: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                status: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!schedule) {
+      throw new NotFoundException('Patrol schedule tidak ditemukan');
+    }
+
+    return {
+      scheduleId: schedule.id,
+      scheduleName: schedule.name,
+      status: schedule.status,
+      enforceSequence: schedule.enforceSequence,
+      source: 'SCHEDULE_DEFAULT',
+      points: schedule.points.map((point) => ({
+        id: point.id,
+        patrolPointId: point.patrolPointId,
+        code: point.patrolPoint.code,
+        name: point.patrolPoint.name,
+        sequence: point.sequence,
+        required: point.required,
+        status: point.patrolPoint.status,
+      })),
     };
   }
 
@@ -1618,6 +1678,245 @@ export class PatrolScheduleService {
 
       return updated;
     });
+  }
+
+  async reorderScheduleRoute(
+    scheduleId: string,
+    dto: ReorderScheduleRouteDto,
+    adminId: string,
+  ) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const schedule = await tx.patrolSchedule.findUnique({
+          where: { id: scheduleId },
+          include: {
+            points: {
+              orderBy: { sequence: 'asc' },
+              include: {
+                patrolPoint: {
+                  select: {
+                    id: true,
+                    code: true,
+                    name: true,
+                    radiusMeters: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+        if (!schedule) {
+          throw new NotFoundException('Patrol schedule tidak ditemukan');
+        }
+
+        if (schedule.status !== ScheduleStatus.ACTIVE) {
+          throw new ConflictException(
+            'Reorder hanya dapat dilakukan pada schedule ACTIVE',
+          );
+        }
+
+        if (schedule.points.length === 0) {
+          throw new BadRequestException(
+            'Schedule belum memiliki titik patroli',
+          );
+        }
+
+        const requestedIds = dto.points.map((point) => point.patrolPointId);
+
+        const uniqueIds = new Set(requestedIds);
+
+        if (uniqueIds.size !== requestedIds.length) {
+          throw new BadRequestException('Patrol point tidak boleh duplikat');
+        }
+
+        const currentIds = schedule.points.map((point) => point.patrolPointId);
+
+        const currentIdSet = new Set(currentIds);
+
+        if (
+          requestedIds.length !== currentIds.length ||
+          requestedIds.some((id) => !currentIdSet.has(id))
+        ) {
+          throw new BadRequestException(
+            'Reorder harus menggunakan seluruh titik schedule yang sudah terdaftar tanpa menambah atau menghapus titik',
+          );
+        }
+
+        const pointById = new Map(
+          schedule.points.map((point) => [point.patrolPointId, point]),
+        );
+
+        const orderedPoints = dto.points.map((item, index) => {
+          const existingPoint = pointById.get(item.patrolPointId);
+
+          if (!existingPoint) {
+            throw new BadRequestException(
+              'Patrol point tidak ditemukan dalam schedule',
+            );
+          }
+
+          return {
+            patrolPointId: item.patrolPointId,
+            sequence: index + 1,
+            required: item.required ?? existingPoint.required,
+            patrolPoint: existingPoint.patrolPoint,
+            id: existingPoint.id,
+          };
+        });
+
+        const assignments = await tx.patrolScheduleAssignment.findMany({
+          where: { scheduleId },
+          select: { id: true },
+        });
+
+        const assignmentIds = assignments.map((assignment) => assignment.id);
+
+        const rounds = await tx.patrolRound.findMany({
+          where: {
+            assignment: {
+              scheduleId,
+            },
+          },
+          select: {
+            id: true,
+            assignmentId: true,
+            routeType: true,
+            checkpoints: {
+              select: {
+                id: true,
+                patrolPointId: true,
+                sequence: true,
+              },
+            },
+          },
+        });
+
+        const expectedPointIds = [...requestedIds].sort();
+
+        for (const round of rounds) {
+          const roundPointIds = round.checkpoints
+            .map((checkpoint) => checkpoint.patrolPointId)
+            .sort();
+
+          if (
+            roundPointIds.length !== expectedPointIds.length ||
+            roundPointIds.some((id, index) => id !== expectedPointIds[index])
+          ) {
+            throw new ConflictException({
+              message:
+                'Komposisi checkpoint tidak sama dengan rute schedule. Reorder global dibatalkan agar data patroli tidak berubah atau hilang.',
+              roundId: round.id,
+            });
+          }
+        }
+
+        for (const point of orderedPoints) {
+          await tx.patrolSchedulePoint.update({
+            where: { id: point.id },
+            data: {
+              sequence: point.sequence,
+              required: point.required,
+            },
+          });
+        }
+
+        if (assignmentIds.length > 0) {
+          await tx.patrolScheduleAssignmentPoint.deleteMany({
+            where: {
+              assignmentId: {
+                in: assignmentIds,
+              },
+            },
+          });
+
+          await tx.patrolScheduleAssignmentPoint.createMany({
+            data: assignmentIds.flatMap((assignmentId) =>
+              orderedPoints.map((point) => ({
+                assignmentId,
+                patrolPointId: point.patrolPointId,
+                sequence: point.sequence,
+                required: point.required,
+              })),
+            ),
+          });
+        }
+
+        for (const round of rounds) {
+          const checkpointByPointId = new Map(
+            round.checkpoints.map((checkpoint) => [
+              checkpoint.patrolPointId,
+              checkpoint,
+            ]),
+          );
+
+          for (const point of orderedPoints) {
+            const checkpoint = checkpointByPointId.get(point.patrolPointId);
+
+            if (!checkpoint) {
+              continue;
+            }
+
+            await tx.patrolCheckpoint.update({
+              where: { id: checkpoint.id },
+              data: {
+                sequence: point.sequence,
+              },
+            });
+          }
+
+          await tx.patrolRound.update({
+            where: { id: round.id },
+            data: {
+              routeType: 'MANUAL',
+            },
+          });
+        }
+
+        await this.auditLogService.createAudit(tx, {
+          userId: adminId,
+          action: 'UPDATE',
+          entityType: 'PatrolSchedule',
+          entityId: scheduleId,
+          oldData: {
+            points: schedule.points.map((point) => ({
+              patrolPointId: point.patrolPointId,
+              sequence: point.sequence,
+              required: point.required,
+            })),
+          },
+          newData: {
+            points: orderedPoints.map((point) => ({
+              patrolPointId: point.patrolPointId,
+              sequence: point.sequence,
+              required: point.required,
+            })),
+            affectedAssignments: assignmentIds.length,
+            affectedRounds: rounds.length,
+            routeType: 'MANUAL',
+          },
+        });
+
+        return {
+          message: 'Urutan seluruh rute schedule berhasil diperbarui',
+          scheduleId,
+          totalPoints: orderedPoints.length,
+          totalAssignments: assignmentIds.length,
+          totalRounds: rounds.length,
+          routeType: 'MANUAL',
+          points: orderedPoints.map((point) => ({
+            patrolPointId: point.patrolPointId,
+            sequence: point.sequence,
+            required: point.required,
+            name: point.patrolPoint.name,
+            code: point.patrolPoint.code,
+          })),
+        };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
   }
 
   private validateTimeRange(startTime: string, endTime: string) {
